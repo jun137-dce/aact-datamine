@@ -1,0 +1,65 @@
+version: "3.9"
+
+services:
+
+  # -------------------------------------------------------
+  # AACT clinical trial data (PostgreSQL)
+  # run_pipeline.py reads from ctgov schema here
+  # -------------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: aact-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aactdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  # -------------------------------------------------------
+  # LadybugDB Explorer — embedded graph DB + web UI
+  # Graph data lives at LBUG_DIR=/database (named volume = persistent)
+  # Access via browser at http://localhost:8000
+  # Stop this container before running ladybug_import.py (single writer)
+  # -------------------------------------------------------
+  explorer:
+    image: kuzudb/explorer:0.11.3
+    container_name: kuzu-explorer
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MODE: READ_ONLY
+    volumes:
+      - graph_data:/database
+
+  # -------------------------------------------------------
+  # Graph-Pipeline — runs run_pipeline.py + ladybug_import.py
+  # Mounts graph_data so ladybug_import.py writes directly to the
+  # same embedded DB the Explorer reads from.
+  # Run with: docker compose run --rm graph-pipeline python ladybug_import.py
+  # -------------------------------------------------------
+  graph-pipeline:
+    build:
+      context: ..
+      dockerfile: ladybug-stack/Dockerfile
+    container_name: graph-pipeline
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: aactdb
+      DB_USER: postgres
+      DB_PASS: postgres
+      LBUG_DIR: /database/database.kz
+    volumes:
+      - ../aact-pipeline:/app
+      - graph_data:/database
+
+volumes:
+  pg_data:
+  graph_data:
