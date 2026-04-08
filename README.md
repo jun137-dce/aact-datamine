@@ -3,7 +3,7 @@
 ## About
 #### This repository contains Dockerfiles and pipeline scripts which connect with a containerized SQL database dump of the ClinicalTrials.gov relational database from [AACT](https://aact.ctti-clinicaltrials.org/downloads) and creates a graph database schema of nodes and edges from select tables for all clinical trials on the primary key nct_id and creates a Kuzu database viewable with Ladybug Explorer
 
-## InitalSetup/Installation
+## Inital Setup/Installation
 Docker images and scripts in this pipeline are designed to be portable, and tested on Windows Subsystem for Linux (WSL2) running Ubuntu 24.04 with Docker Desktop integration.
 
 ### WSL2
