@@ -201,7 +201,7 @@ WHERE s IN (
 RETURN p
 LIMIT 30;
 ```
-![alt text](image-6.png)
+![alt text](img/image-6.png)
 
 #### Cancer studies in Los Angeles
 ```
