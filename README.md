@@ -27,10 +27,12 @@ https://aact.ctti-clinicaltrials.org/static/static_db_copies/daily/2026-04-08?so
 Unzip the .ZIP file to a location inside this repo
 
 ### 1.2 Docker Compose
-Once Docker is installed and integrated to WSL2, open the Ubuntu program on Windows and clone this repository to your folder of choice (preferably /home/username)
+Once Docker is installed and integrated to WSL2, open the Ubuntu terminal on Windows and clone this repository to your folder of choice (preferably /home/username)
+```
+git clone https://github.com/jun137-dce/aact-datamine.git
+```
 
-
-#### Naviage to datamine/ladybug-stack in the Ubuntu terminal and `docker compose` 
+#### Naviage to datamine/ladybug-stack in the Ubuntu terminal and run `docker compose` 
 ```
 cd datamine/ladybug-stack
 docker compose up -d
