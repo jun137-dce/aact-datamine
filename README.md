@@ -30,7 +30,7 @@ Unzip the .ZIP file to a location inside this repo
 Once Docker is installed and integrated to WSL2, open the Ubuntu program on Windows and clone this repository to your folder of choice (preferably /home/username)
 
 
-#### Naviage to datamine/ladybug-stack in the Ubuntu terminal and download the AACT SQL database 
+#### Naviage to datamine/ladybug-stack in the Ubuntu terminal and `docker compose` 
 ```
 cd datamine/ladybug-stack
 docker compose up -d
