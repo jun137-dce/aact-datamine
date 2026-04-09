@@ -153,7 +153,7 @@ Importing edges...
 Done. Data loaded into Kuzu database.
 
 ```
-#### NOTE: Prior `.kz` database files need to be deleted before re-running `ladybug_import.py`
+#### NOTE: Prior `.kz` database files need to be deleted if you ever re-run `ladybug_import.py`
 ```
 docker stop kuzu-explorer
 docker run --rm -v ladybug-stack_graph_data:/data alpine sh -c "rm -rf /data/*"
