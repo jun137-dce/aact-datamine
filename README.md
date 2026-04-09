@@ -111,7 +111,7 @@ docker compose run --rm graph-pipeline python ladybug_import.py
 ```
 #### A successful run will output:
 ```
-✔ Container aact-postgres Running                                                                                                                       0.0s
+✔ Container aact-postgres Running
 Container ladybug-stack-graph-pipeline-run-46103dda4c4c Creating
 Container ladybug-stack-graph-pipeline-run-46103dda4c4c Created
 Opening Kuzu DB at /database/database.kz ...
@@ -176,7 +176,7 @@ MATCH p = (s:Study {nct_id: "NCT01169779"})
 RETURN p
 LIMIT 50;
 ```
-![](image-4.png)
+![](img/image-4.png)
 
 #### MeSH terms for diabetes study
 ```
