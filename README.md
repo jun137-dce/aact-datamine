@@ -215,4 +215,4 @@ LIMIT 50;
 ![alt text](<img/image-7.png>)
 
 ### Acknowledgements
-Aggregate Analysis of ClinicalTrials.gov (AACT) Database. Clinical Trials Transformation Initiative (CTTI). Available at: https://aact.ctti-clinicaltrials.org/ (Accessed: Date and/or frequency accessed).
+Aggregate Analysis of ClinicalTrials.gov (AACT) Database. Clinical Trials Transformation Initiative (CTTI). Available at: https://aact.ctti-clinicaltrials.org/ (Accessed: 4/8/2026).
