@@ -28,7 +28,7 @@ services:
   explorer:
     image: ghcr.io/ladybugdb/explorer:latest
     container_name: ladybug-explorer
-    restart: unless-stopped
+    user: "1000:1000"
     ports:
       - "8000:8000"
     environment: {}
@@ -46,6 +46,7 @@ services:
       context: ..
       dockerfile: ladybug-stack/Dockerfile
     container_name: graph-pipeline
+    user: "1000:1000"
     depends_on:
       - postgres
     environment:
