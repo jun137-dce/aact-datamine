@@ -130,13 +130,9 @@ def main():
     conditions["name"] = clean_str(conditions["name"])
     conditions = conditions[conditions["name"] != ""]
 
-    conditions["id"] = (
-        conditions["nct_id"] + "|" + normalize_str(conditions["name"])
-    )
+    conditions["id"] = normalize_str(conditions["name"])
 
-    conditions = conditions.drop_duplicates(subset=["id"])
-
-    conditions_nodes = conditions[["id", "nct_id", "name"]]
+    conditions_nodes = conditions[["id", "name"]].drop_duplicates(subset=["id"])
     conditions_nodes.to_parquet(os.path.join(OUTPUT_DIR, "conditions.parquet"), index=False)
 
     conditions_edges = make_conditions_edges(conditions)
@@ -154,15 +150,11 @@ def main():
     interventions["name"] = clean_str(interventions["name"])
     interventions = interventions[interventions["name"] != ""]
 
-    interventions["id"] = (
-        interventions["nct_id"] + "|" + normalize_str(interventions["name"])
-    )
-
-    interventions = interventions.drop_duplicates(subset=["id"])
+    interventions["id"] = normalize_str(interventions["name"])
 
     interventions_nodes = interventions[
-        ["id", "nct_id", "name", "intervention_type"]
-    ]
+        ["id", "name", "intervention_type"]
+    ].drop_duplicates(subset=["id"])
     interventions_nodes.to_parquet(os.path.join(OUTPUT_DIR, "interventions.parquet"), index=False)
 
     interventions_edges = make_interventions_edges(interventions)

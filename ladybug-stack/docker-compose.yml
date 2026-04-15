@@ -26,13 +26,12 @@ services:
   # Stop this container before running ladybug_import.py (single writer)
   # -------------------------------------------------------
   explorer:
-    image: kuzudb/explorer:0.11.3
-    container_name: kuzu-explorer
+    image: ghcr.io/ladybugdb/explorer:latest
+    container_name: ladybug-explorer
     restart: unless-stopped
     ports:
       - "8000:8000"
-    environment:
-      MODE: READ_ONLY
+    environment: {}
     volumes:
       - graph_data:/database
 
