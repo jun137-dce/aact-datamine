@@ -8,8 +8,8 @@ import real_ladybug as lb
 # -------------------------
 INPUT_DIR = "/app/output"
 
-# Kuzu database path (shared Docker volume)
-DB_PATH = os.getenv("KUZU_DB_PATH", "/database/database.kz")
+# Ladybug database path (shared Docker volume)
+DB_PATH = os.getenv("LBUG_DB_PATH", "/database/database.kz")
 
 # Node parquet files: (filename, node_table_name, primary_key_col)
 NODE_FILES = [
@@ -48,7 +48,7 @@ EMBEDDING_DIM = 768
 # -------------------------
 
 def _col_type(col, dtype, sample_series):
-    """Map a pandas dtype to a Kuzu column type string."""
+    """Map a pandas dtype to a Ladybug column type string."""
     if pd.api.types.is_integer_dtype(dtype):
         return "INT64"
     if pd.api.types.is_float_dtype(dtype):
@@ -98,7 +98,7 @@ def create_rel_table(conn, rel, from_table, to_table):
 # -------------------------
 
 def main():
-    print(f"Opening Kuzu DB at {DB_PATH} ...")
+    print(f"Opening Ladybug DB at {DB_PATH} ...")
     db   = lb.Database(DB_PATH)
     conn = lb.Connection(db)
 
@@ -171,7 +171,7 @@ def main():
         os.remove(tmp)
         print(f"  {rel}: {len(df)} rows")
 
-    print("\nDone. Data loaded into Kuzu database.")
+    print("\nDone. Data loaded into Ladybug database.")
 
 
 if __name__ == "__main__":
