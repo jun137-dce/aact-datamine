@@ -107,7 +107,15 @@ cd datamine/ladybug-stack
 docker compose build graph-pipeline
 ```
 
-### 3.2 Import Graph Node and Edges into .kz database file
+### 3.2 Add PubMedBERT embeddings to Study, Condition, Intervention and MeSHTerm
+```
+docker compose run --rm graph-pipeline python scripts/embed.py
+```
+#### A successful run will output:
+![alt text](img/image-8.png)
+
+
+### 3.3 Import Graph Node and Edges into .kz database file
 ```
 docker compose run --rm graph-pipeline python ladybug_import.py
 ```

@@ -135,6 +135,12 @@ def _embed_nodes(df, id_col, text_col, entity, out_filename):
 
     if not pending.empty:
         _load_model()
+        print("CUDA available:", torch.cuda.is_available())
+        print("Device count:", torch.cuda.device_count())
+        if torch.cuda.is_available():
+            print("GPU:", torch.cuda.get_device_name(0))
+        else:
+            print("Running on CPU")
         buf_ids, buf_embs = [], []
         shard_idx = len(os.listdir(_shard_dir(entity))) if os.path.isdir(_shard_dir(entity)) else 0
 
