@@ -1,14 +1,15 @@
 import os
+import numpy as np
 import pandas as pd
-import kuzu
+import real_ladybug as lb
 
 # -------------------------
 # Config
 # -------------------------
 INPUT_DIR = "/app/output"
 
-# Kuzu database path (shared Docker volume)
-DB_PATH = os.getenv("KUZU_DB_PATH", "/database/database.kz")
+# Ladybug database path (shared Docker volume)
+DB_PATH = os.getenv("LBUG_DB_PATH", "/database/database.kz")
 
 # Node parquet files: (filename, node_table_name, primary_key_col)
 NODE_FILES = [
@@ -19,6 +20,14 @@ NODE_FILES = [
     ("facilities.parquet",       "Facility",     "id"),
     ("mesh_terms.parquet",       "MeshTerm",     "id"),
 ]
+
+# Embedding parquets to merge onto node tables before import: node_table → filename
+EMBEDDING_FILES = {
+    "Study":        "study_bert_embeddings.parquet",
+    "Condition":    "condition_bert_embeddings.parquet",
+    "Intervention": "intervention_bert_embeddings.parquet",
+    "MeshTerm":     "mesh_term_bert_embeddings.parquet",
+}
 
 # Edge parquet files: (filename, rel_table, from_node_table, to_node_table)
 EDGE_FILES = [
@@ -32,28 +41,45 @@ EDGE_FILES = [
     ("mesh_hierarchy_edges.parquet",     "IS_A",                  "MeshTerm", "MeshTerm"),
 ]
 
+EMBEDDING_DIM = 768
+
 # -------------------------
 # Helpers
 # -------------------------
 
-def _col_type(dtype):
+def _col_type(col, dtype, sample_series):
+    """Map a pandas dtype to a Ladybug column type string."""
     if pd.api.types.is_integer_dtype(dtype):
         return "INT64"
     if pd.api.types.is_float_dtype(dtype):
         return "DOUBLE"
     if pd.api.types.is_bool_dtype(dtype):
         return "BOOLEAN"
+    # Detect embedding arrays: object dtype whose first non-null value is array-like
+    if dtype == object:
+        first = sample_series.dropna().iloc[0] if not sample_series.dropna().empty else None
+        if first is not None and isinstance(first, (list, np.ndarray)):
+            return f"FLOAT[{EMBEDDING_DIM}]"
     return "STRING"
+
+
+def _merge_embeddings(df, pk_col, emb_path):
+    """Left-join embedding parquet onto node df. Rows without embeddings get null."""
+    emb = pd.read_parquet(emb_path)
+    df  = df.merge(emb[[pk_col, "bert_embedding"]], on=pk_col, how="left")
+    covered = df["bert_embedding"].notna().sum()
+    print(f"    embeddings joined: {covered}/{len(df)} nodes covered")
+    return df
+
 
 # -------------------------
 # Schema creation
 # -------------------------
 
-def create_node_table(conn, table, parquet_path, pk_col):
-    df = pd.read_parquet(parquet_path).head(0)
+def create_node_table(conn, table, df, pk_col):
     col_defs = []
-    for col, dtype in df.dtypes.items():
-        t = _col_type(dtype)
+    for col in df.columns:
+        t      = _col_type(col, df[col].dtype, df[col])
         suffix = " PRIMARY KEY" if col == pk_col else ""
         col_defs.append(f"{col} {t}{suffix}")
     ddl = f"CREATE NODE TABLE IF NOT EXISTS {table}({', '.join(col_defs)})"
@@ -66,39 +92,59 @@ def create_rel_table(conn, rel, from_table, to_table):
     conn.execute(ddl)
     print(f"  rel table ready: {rel}")
 
+
 # -------------------------
 # Main
 # -------------------------
 
 def main():
-    print(f"Opening Kuzu DB at {DB_PATH} ...")
-    db = kuzu.Database(DB_PATH)
-    conn = kuzu.Connection(db)
+    print(f"Opening Ladybug DB at {DB_PATH} ...")
+    db   = lb.Database(DB_PATH)
+    conn = lb.Connection(db)
 
     node_pks = {table: pk for _, table, pk in NODE_FILES}
 
-    # ---- Schema ----
-    print("\nSetting up schema...")
+    # ---- Load node parquets and merge embeddings ----
+    print("\nLoading node parquets and merging embeddings...")
+    node_dfs = {}
     for filename, table, pk_col in NODE_FILES:
         path = os.path.join(INPUT_DIR, filename)
-        if os.path.exists(path):
-            create_node_table(conn, table, path, pk_col)
-        else:
-            print(f"  WARNING: {filename} not found")
+        if not os.path.exists(path):
+            print(f"  WARNING: {filename} not found, skipping {table}")
+            continue
+        df = pd.read_parquet(path)
+        emb_filename = EMBEDDING_FILES.get(table)
+        if emb_filename:
+            emb_path = os.path.join(INPUT_DIR, emb_filename)
+            if os.path.exists(emb_path):
+                df = _merge_embeddings(df, pk_col, emb_path)
+            else:
+                print(f"  WARNING: {emb_filename} not found — {table} nodes imported without embeddings")
+        node_dfs[table] = (df, pk_col)
+
+    # ---- Schema ----
+    print("\nSetting up schema...")
+    for _, table, pk_col in NODE_FILES:
+        if table not in node_dfs:
+            continue
+        df, pk_col = node_dfs[table]
+        create_node_table(conn, table, df, pk_col)
 
     for _, rel, from_table, to_table in EDGE_FILES:
         create_rel_table(conn, rel, from_table, to_table)
 
     # ---- Nodes ----
     print("\nImporting nodes...")
-    for filename, table, _ in NODE_FILES:
-        path = os.path.join(INPUT_DIR, filename)
-        if not os.path.exists(path):
-            print(f"  skipping {filename}")
+    for _, table, pk_col in NODE_FILES:
+        if table not in node_dfs:
+            print(f"  skipping {table}")
             continue
-        row_count = len(pd.read_parquet(path))
-        conn.execute(f"COPY {table} FROM '{path}'")
-        print(f"  {table}: {row_count} rows")
+        df, _ = node_dfs[table]
+        tmp = os.path.join(INPUT_DIR, f"{table.lower()}_import.parquet")
+        df.to_parquet(tmp, index=False)
+        conn.execute(f"COPY {table} FROM '{tmp}'")
+        os.remove(tmp)
+        print(f"  {table}: {len(df)} rows")
 
     # ---- Edges ----
     print("\nImporting edges...")
@@ -108,7 +154,7 @@ def main():
             print(f"  skipping {filename}")
             continue
         from_pk = node_pks[from_table]
-        to_pk = node_pks[to_table]
+        to_pk   = node_pks[to_table]
         df = pd.read_parquet(path)
         if from_pk == to_pk:
             # Parquet forbids duplicate column names; use positional from_id/to_id.
@@ -125,7 +171,7 @@ def main():
         os.remove(tmp)
         print(f"  {rel}: {len(df)} rows")
 
-    print("\nDone. Data loaded into Kuzu database.")
+    print("\nDone. Data loaded into Ladybug database.")
 
 
 if __name__ == "__main__":

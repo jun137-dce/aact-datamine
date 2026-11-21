@@ -5,4 +5,4 @@ psycopg2-binary
 sqlalchemy
 requests
 pyarrow
-kuzu
+real_ladybug

@@ -26,13 +26,12 @@ services:
   # Stop this container before running ladybug_import.py (single writer)
   # -------------------------------------------------------
   explorer:
-    image: kuzudb/explorer:0.11.3
-    container_name: kuzu-explorer
-    restart: unless-stopped
+    image: ghcr.io/ladybugdb/explorer:latest
+    container_name: ladybug-explorer
+    user: "1000:1000"
     ports:
       - "8000:8000"
-    environment:
-      MODE: READ_ONLY
+    environment: {}
     volumes:
       - graph_data:/database
 
@@ -47,6 +46,7 @@ services:
       context: ..
       dockerfile: ladybug-stack/Dockerfile
     container_name: graph-pipeline
+    user: "1000:1000"
     depends_on:
       - postgres
     environment:

@@ -1,7 +1,7 @@
 # ClinicalTrials.gov Datamine
 
 ## About
-#### This repository contains Dockerfiles and pipeline scripts which connect with a containerized SQL database dump of the ClinicalTrials.gov relational database from [AACT](https://aact.ctti-clinicaltrials.org/downloads) and creates a graph database schema of nodes and edges from select tables for all clinical trials on the primary key nct_id and creates a Kuzu database viewable with Ladybug Explorer
+#### This repository contains Dockerfiles and pipeline scripts which connect with a containerized SQL database dump of the ClinicalTrials.gov relational database from [AACT](https://aact.ctti-clinicaltrials.org/downloads) and creates a graph database schema of nodes and edges from select tables for all clinical trials on the primary key nct_id and creates a Ladybug database viewable with Ladybug Explorer
 
 ## Inital Setup/Installation
 Docker images and scripts in this pipeline are designed to be portable, and tested on Windows Subsystem for Linux (WSL2) running Ubuntu 24.04 with Docker Desktop integration.
@@ -99,7 +99,7 @@ Encoding complete.
 ✅ Pipeline complete. Outputs written to /app/output
 ```
 
-## 3. Import Nodes and Edges into Kuzu Explorer with `ladybug_import.py`
+## 3. Import Nodes and Edges into Ladybug Explorer with `ladybug_import.py`
 
 ### 3.1 Build environment Docker Image
 ```
@@ -116,7 +116,7 @@ docker compose run --rm graph-pipeline python ladybug_import.py
 ✔ Container aact-postgres Running
 Container ladybug-stack-graph-pipeline-run-46103dda4c4c Creating
 Container ladybug-stack-graph-pipeline-run-46103dda4c4c Created
-Opening Kuzu DB at /database/database.kz ...
+Opening Ladybug DB at /database/database.kz ...
 
 Setting up schema...
   node table ready: Study
@@ -152,19 +152,19 @@ Importing edges...
   HAS_MESH_INTERVENTION: 460608 rows
   IS_A: 18880 rows
 
-Done. Data loaded into Kuzu database.
+Done. Data loaded into Ladybug database.
 
 ```
 #### NOTE: Prior `.kz` database files need to be deleted if you ever re-run `ladybug_import.py`
 ```
-docker stop kuzu-explorer
+docker stop ladybug-explorer
 docker run --rm -v ladybug-stack_graph_data:/data alpine sh -c "rm -rf /data/*"
 ```
-## 4. View Graph Database in Kuzu Explorer
-### 4.1 Start the kuzu-explorer container in Docker Desktop
+## 4. View Graph Database in Ladybug Explorer
+### 4.1 Start the ladybug-explorer container in Docker Desktop
 ![alt text](img/image-1.png)
 
-### 4.2 Navigate to Kuzu Explorer @ [localhost:8000](http://localhost:8000/)
+### 4.2 Navigate to Ladybug Explorer @ [localhost:8000](http://localhost:8000/)
 #### You will see the graph schema:
 ![alt text](img/image-2.png)
 
