@@ -344,6 +344,11 @@ def main():
         "subject_withdrawal_count",
         "lost_to_followup_count",
         "death_withdrawal_count",
+        "protocol_deviation_count",
+        "physician_decision_count",
+        "sponsor_decision_count",
+        "lack_of_efficacy_count",
+        "ineligibility_count",
     ]
     study_features = study_features.merge(withdrawal_study_feats, on="nct_id", how="left")
     study_features[withdrawal_bool_cols]  = study_features[withdrawal_bool_cols].fillna(0).astype(int)

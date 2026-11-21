@@ -23,9 +23,18 @@ Study-level columns added to study_features:
   arm_count_parity           1 if executed arm count == planned arm count
   total_withdrawal_count     sum of drop_withdrawals.count across all arms/periods
   adverse_event_withdrawal_count
-  subject_withdrawal_count   withdrawal by subject + withdrew consent
+  subject_withdrawal_count      withdrawal by subject / withdrew consent / patient decision
   lost_to_followup_count
   death_withdrawal_count
+  protocol_deviation_count
+  physician_decision_count
+  sponsor_decision_count
+  lack_of_efficacy_count
+  ineligibility_count
+
+Outputs also written:
+  withdrawal_reason_lookup.parquet  — granular (nct_id, result_group_id, period_normalized,
+                                       reason_normalized, reason_bucket, withdrawal_count)
 """
 
 import os
@@ -83,7 +92,20 @@ withdrawal_agg AS (
                    OR LOWER(dw.reason) LIKE '%%patient decision%%'                              THEN dw.count ELSE 0 END) AS subject_withdrawal,
         SUM(CASE WHEN LOWER(dw.reason) LIKE '%%lost to follow%%'                                THEN dw.count ELSE 0 END) AS lost_to_followup,
         SUM(CASE WHEN LOWER(dw.reason) LIKE '%%death%%'
-                   OR LOWER(dw.reason) LIKE '%%deceased%%'                                      THEN dw.count ELSE 0 END) AS death_withdrawals
+                   OR LOWER(dw.reason) LIKE '%%deceased%%'                                      THEN dw.count ELSE 0 END) AS death_withdrawals,
+        SUM(CASE WHEN LOWER(dw.reason) LIKE '%%protocol deviation%%'
+                   OR LOWER(dw.reason) LIKE '%%protocol violation%%'
+                   OR LOWER(dw.reason) LIKE '%%non-compliance%%'                                THEN dw.count ELSE 0 END) AS protocol_deviation,
+        SUM(CASE WHEN LOWER(dw.reason) LIKE '%%physician%%'
+                   OR LOWER(dw.reason) LIKE '%%investigator%%'
+                   OR LOWER(dw.reason) LIKE '%%doctor%%'                                        THEN dw.count ELSE 0 END) AS physician_decision,
+        SUM(CASE WHEN LOWER(dw.reason) LIKE '%%sponsor%%'                                       THEN dw.count ELSE 0 END) AS sponsor_decision,
+        SUM(CASE WHEN LOWER(dw.reason) LIKE '%%lack of efficacy%%'
+                   OR LOWER(dw.reason) LIKE '%%insufficient response%%'
+                   OR LOWER(dw.reason) LIKE '%%treatment failure%%'                             THEN dw.count ELSE 0 END) AS lack_of_efficacy,
+        SUM(CASE WHEN LOWER(dw.reason) LIKE '%%ineligib%%'
+                   OR LOWER(dw.reason) LIKE '%%not eligible%%'
+                   OR LOWER(dw.reason) LIKE '%%screen fail%%'                                   THEN dw.count ELSE 0 END) AS ineligibility
     FROM ctgov.drop_withdrawals dw
     GROUP BY dw.result_group_id
 ),
@@ -120,6 +142,11 @@ SELECT
     COALESCE(wa.subject_withdrawal,        0)       AS subject_withdrawal,
     COALESCE(wa.lost_to_followup,          0)       AS lost_to_followup,
     COALESCE(wa.death_withdrawals,         0)       AS death_withdrawals,
+    COALESCE(wa.protocol_deviation,        0)       AS protocol_deviation,
+    COALESCE(wa.physician_decision,        0)       AS physician_decision,
+    COALESCE(wa.sponsor_decision,          0)       AS sponsor_decision,
+    COALESCE(wa.lack_of_efficacy,          0)       AS lack_of_efficacy,
+    COALESCE(wa.ineligibility,             0)       AS ineligibility,
     COALESCE(sc.started_count,             0)       AS started_count
 FROM flow_groups fg
 LEFT JOIN planned_arms pa
@@ -130,6 +157,50 @@ LEFT JOIN planned_arms pa
     )
 LEFT JOIN withdrawal_agg  wa ON fg.result_group_id = wa.result_group_id
 LEFT JOIN started_counts  sc ON fg.result_group_id = sc.result_group_id
+"""
+
+
+# Granular lookup: one row per (nct_id, result_group_id, period, reason).
+# period_normalized and reason_normalized are LOWER(TRIM(…)) so "Death"/"DEATH"
+# collapse to the same key.  reason_bucket maps to the same 9-category taxonomy
+# used in withdrawal_agg above, enabling joins from the parquet for model filtering.
+_REASON_LOOKUP_SQL = """
+SELECT
+    dw.nct_id,
+    dw.result_group_id,
+    LOWER(TRIM(dw.period)) AS period_normalized,
+    LOWER(TRIM(dw.reason)) AS reason_normalized,
+    CASE
+        WHEN LOWER(dw.reason) LIKE '%%adverse event%%'
+          OR LOWER(dw.reason) LIKE '%%toxicity%%'                   THEN 'adverse_event'
+        WHEN LOWER(dw.reason) LIKE '%%withdrawal by subject%%'
+          OR LOWER(dw.reason) LIKE '%%withdrew consent%%'
+          OR LOWER(dw.reason) LIKE '%%patient decision%%'           THEN 'subject_voluntary'
+        WHEN LOWER(dw.reason) LIKE '%%lost to follow%%'             THEN 'lost_to_followup'
+        WHEN LOWER(dw.reason) LIKE '%%death%%'
+          OR LOWER(dw.reason) LIKE '%%deceased%%'                   THEN 'death'
+        WHEN LOWER(dw.reason) LIKE '%%protocol deviation%%'
+          OR LOWER(dw.reason) LIKE '%%protocol violation%%'
+          OR LOWER(dw.reason) LIKE '%%non-compliance%%'             THEN 'protocol_deviation'
+        WHEN LOWER(dw.reason) LIKE '%%physician%%'
+          OR LOWER(dw.reason) LIKE '%%investigator%%'
+          OR LOWER(dw.reason) LIKE '%%doctor%%'                     THEN 'physician_decision'
+        WHEN LOWER(dw.reason) LIKE '%%sponsor%%'                    THEN 'sponsor_decision'
+        WHEN LOWER(dw.reason) LIKE '%%lack of efficacy%%'
+          OR LOWER(dw.reason) LIKE '%%insufficient response%%'
+          OR LOWER(dw.reason) LIKE '%%treatment failure%%'          THEN 'lack_of_efficacy'
+        WHEN LOWER(dw.reason) LIKE '%%ineligib%%'
+          OR LOWER(dw.reason) LIKE '%%not eligible%%'
+          OR LOWER(dw.reason) LIKE '%%screen fail%%'                THEN 'ineligibility'
+        ELSE 'other'
+    END AS reason_bucket,
+    SUM(dw.count) AS withdrawal_count
+FROM ctgov.drop_withdrawals dw
+WHERE dw.reason IS NOT NULL
+  AND dw.count  IS NOT NULL
+GROUP BY dw.nct_id, dw.result_group_id,
+         LOWER(TRIM(dw.period)), LOWER(TRIM(dw.reason))
+ORDER BY dw.nct_id, dw.result_group_id, period_normalized, reason_normalized
 """
 
 
@@ -189,6 +260,8 @@ def build_trial_arm_nodes(df):
         "started_count",
         "total_withdrawals", "adverse_event_withdrawals",
         "subject_withdrawal", "lost_to_followup", "death_withdrawals",
+        "protocol_deviation", "physician_decision", "sponsor_decision",
+        "lack_of_efficacy", "ineligibility",
         "withdrawal_rate",
     ]
     return df[keep].drop_duplicates(subset=["id"]).reset_index(drop=True)
@@ -221,13 +294,18 @@ def compute_withdrawal_study_features(arms_df):
       death_withdrawal_count     (int)
     """
     agg = arms_df.groupby("nct_id").agg(
-        _n_arms_executed        = ("executed_arm_count", "first"),
-        _n_arms_planned         = ("planned_arm_count",  "first"),
-        total_withdrawal_count  = ("total_withdrawals",  "sum"),
+        _n_arms_executed               = ("executed_arm_count",        "first"),
+        _n_arms_planned                = ("planned_arm_count",         "first"),
+        total_withdrawal_count         = ("total_withdrawals",         "sum"),
         adverse_event_withdrawal_count = ("adverse_event_withdrawals", "sum"),
         subject_withdrawal_count       = ("subject_withdrawal",        "sum"),
         lost_to_followup_count         = ("lost_to_followup",          "sum"),
         death_withdrawal_count         = ("death_withdrawals",         "sum"),
+        protocol_deviation_count       = ("protocol_deviation",        "sum"),
+        physician_decision_count       = ("physician_decision",        "sum"),
+        sponsor_decision_count         = ("sponsor_decision",          "sum"),
+        lack_of_efficacy_count         = ("lack_of_efficacy",          "sum"),
+        ineligibility_count            = ("ineligibility",             "sum"),
     ).reset_index()
 
     agg["has_withdrawal_data"] = 1
@@ -273,6 +351,13 @@ def build_trial_arms(engine, output_dir):
     edges_path = os.path.join(output_dir, "trial_arm_edges.parquet")
     edges.to_parquet(edges_path, index=False)
     print(f"  {len(edges)} HAS_ARM edges → {edges_path}")
+
+    print("Building withdrawal reason lookup (period × reason × bucket)...")
+    lookup = pd.read_sql(_REASON_LOOKUP_SQL, engine)
+    lookup_path = os.path.join(output_dir, "withdrawal_reason_lookup.parquet")
+    lookup.to_parquet(lookup_path, index=False)
+    n_distinct = lookup[["reason_normalized", "reason_bucket"]].drop_duplicates()
+    print(f"  {len(lookup):,} rows, {len(n_distinct)} distinct reason strings → {lookup_path}")
 
     print("Computing study-level withdrawal features...")
     study_feats = compute_withdrawal_study_features(df)
