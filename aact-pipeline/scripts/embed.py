@@ -30,7 +30,7 @@ from sqlalchemy import create_engine
 # -------------------------
 MODEL_NAME  = "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
 OUTPUT_DIR  = os.getenv("OUTPUT_DIR", "/app/output")
-BATCH_SIZE  = int(os.getenv("BERT_BATCH_SIZE", "32"))
+BATCH_SIZE  = int(os.getenv("BERT_BATCH_SIZE", "64"))
 MAX_LENGTH  = 512
 SHARD_SIZE  = 5_000
 
