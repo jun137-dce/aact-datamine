@@ -37,24 +37,52 @@ Reads clinical trial data from PostgreSQL (`ctgov` schema), applies feature engi
   - `mesh_*.parquet`: MeSH term edges
   - `study_features.parquet`: Post-processed study properties (phases, durations, covid_transition, covid_overlap_days, withdrawal counts, disease area multi-hot columns, etc.)
   - `trial_arms.parquet`, `trial_arm_edges.parquet`: TrialArm nodes + HAS_ARM edges (Step 10)
+  - `withdrawal_reason_lookup.parquet`, `withdrawal_entry_edges.parquet`: WithdrawalEntry nodes + HAS_WITHDRAWAL_ENTRY edges (Step 10)
   - `intervention_synonyms.parquet`: trade name → INN synonym pairs (feeds mesh_similarity_edges.py)
 
 #### `ladybug_import.py`
 Loads parquet files into LadybugDB (Kuzu-backed embedded graph DB):
 - **Single-writer constraint:** Stop the `explorer` container before running this.
-- Creates Study, Condition, Intervention, Sponsor, Facility, MeshTerm, **TrialArm** nodes
-- Populates edge types: HAS_CONDITION, HAS_INTERVENTION, IS_LEAD_SPONSOR, IS_COLLABORATOR, HAS_FACILITY, HAS_MESH_CONDITION, HAS_MESH_INTERVENTION, **HAS_ARM**
+- Creates Study, Condition, Intervention, Sponsor, Facility, MeshTerm, **TrialArm**, **WithdrawalEntry** nodes
+- Populates edge types: HAS_CONDITION, HAS_INTERVENTION, IS_LEAD_SPONSOR, IS_COLLABORATOR, HAS_FACILITY, HAS_MESH_CONDITION, HAS_MESH_INTERVENTION, **HAS_ARM**, **HAS_WITHDRAWAL_ENTRY**
 - Stores BERT embeddings (768-D) on Study and MeshTerm nodes
 - MAPS_TO_MESH_CONDITION / MAPS_TO_MESH_INTERVENTION schema registered but files skipped if absent (disabled pending tuning)
+- **Schema migration:** No ALTER TABLE — delete `/database/database.kz` and re-import from parquets when schema changes
 
 #### `scripts/embed.py`
 Fetches PubMedBERT embeddings (768-D) for Study and MeshTerm nodes; writes parquet shards.
 - Conditions and interventions are embedded at atomic-term level by `mesh_similarity_edges.py` at edge-creation time, not here.
 
 #### `scripts/withdrawals.py`
-Builds `TrialArm` nodes and `HAS_ARM` edges from `drop_withdrawals` / `result_groups` / `design_groups`:
-- Three-tier arm matching: Tier 1 exact title > Tier 2 count parity + position > Tier 3 unmatched
-- Returns `study_withdrawal_features` DataFrame (has_withdrawal_data, arm_count_parity, withdrawal counts by reason category)
+Builds `TrialArm` nodes, `HAS_ARM` edges, and `WithdrawalEntry` nodes + `HAS_WITHDRAWAL_ENTRY` edges from `drop_withdrawals` / `result_groups` / `design_groups`.
+
+**Keying drop_withdrawals → TrialArm:**
+```
+ctgov.drop_withdrawals.result_group_id
+    → ctgov.result_groups.id  (WHERE result_type = 'Participant Flow')
+    → TrialArm.id = nct_id | ctgov_group_code
+```
+`result_groups` is the bridge — each Participant Flow group gets a `ctgov_group_code` (P1, P2…) that becomes the TrialArm composite key. `drop_withdrawals` rows link via `result_group_id`. Arms are deduplicated first (highest-confidence match wins), then withdrawal counts are joined onto the deduped arm rows so each `result_group_id` maps to exactly one TrialArm.
+
+**SQL bucketing — 9 reason categories:**
+Reasons are pre-normalized in a CTE (`LOWER(TRIM(reason))`) before bucketing so "Death"/"DEATH"/"death" all collapse to the same key. The outer CASE applies patterns on the alias:
+- `adverse_event` — adverse event, toxicity
+- `subject_voluntary` — withdrawal by subject, withdrew consent, patient decision
+- `lost_to_followup` — lost to follow
+- `death` — death, deceased
+- `protocol_deviation` — protocol deviation/violation, non-compliance
+- `physician_decision` — physician, investigator, doctor
+- `sponsor_decision` — sponsor
+- `lack_of_efficacy` — lack of efficacy, insufficient response, treatment failure
+- `ineligibility` — ineligib, not eligible, screen fail
+- `other` — catch-all
+
+**Outputs:**
+- `trial_arms.parquet` — TrialArm nodes (includes `result_group_id` for back-reference, 9 bucket count columns)
+- `trial_arm_edges.parquet` — HAS_ARM Study → TrialArm
+- `withdrawal_reason_lookup.parquet` — WithdrawalEntry nodes: one row per `(nct_id, result_group_id, period_normalized, reason_normalized)` with `reason_bucket` and `withdrawal_count`
+- `withdrawal_entry_edges.parquet` — HAS_WITHDRAWAL_ENTRY TrialArm → WithdrawalEntry (joined via `result_group_id`)
+- Returns `study_withdrawal_features` DataFrame for merging into `study_features.parquet`
 - Called automatically in `run_aact_pipeline.py` Step 10
 
 #### `scripts/mesh_similarity_edges.py`
@@ -118,10 +146,11 @@ Flexible trial selection → subgraph extraction → GraphSAGE training → inte
 - `Sponsor` (key: `id`): name
 - `Facility` (key: `id` = "lat|lon" or name): name, city, country
 - `MeshTerm` (key: `id`): name, bert_embedding (768-D)
-- **`TrialArm`** (key: `id` = `nct_id|ctgov_group_code`): flow_arm_title, planned_arm_title, planned_arm_type, arm_link_confidence, executed_arm_count, planned_arm_count, started_count, withdrawal_rate, total_withdrawals, withdrawal counts by reason
+- **`TrialArm`** (key: `id` = `nct_id|ctgov_group_code`): flow_arm_title, planned_arm_title, planned_arm_type, arm_link_confidence, executed_arm_count, planned_arm_count, started_count, withdrawal_rate, total_withdrawals, result_group_id (back-reference for joining withdrawal entries), plus 9 bucket count columns: adverse_event_withdrawal_count, subject_withdrawal_count, lost_to_followup_count, death_withdrawal_count, protocol_deviation_count, physician_decision_count, sponsor_decision_count, lack_of_efficacy_count, ineligibility_count
+- **`WithdrawalEntry`** (key: `id` = `nct_id|result_group_id|period_normalized|reason_normalized`): nct_id, result_group_id, period_normalized, reason_normalized, reason_bucket (one of 9 categories + other), withdrawal_count
 
 **Edge Types:**
-- `HAS_CONDITION`, `HAS_INTERVENTION`, `IS_LEAD_SPONSOR`, `IS_COLLABORATOR`, `HAS_FACILITY`, `HAS_MESH_CONDITION`, `HAS_MESH_INTERVENTION`, **`HAS_ARM`**
+- `HAS_CONDITION`, `HAS_INTERVENTION`, `IS_LEAD_SPONSOR`, `IS_COLLABORATOR`, `HAS_FACILITY`, `HAS_MESH_CONDITION`, `HAS_MESH_INTERVENTION`, **`HAS_ARM`**, **`HAS_WITHDRAWAL_ENTRY`** (TrialArm → WithdrawalEntry)
 
 **Disabled (schema registered, files skipped):** `MAPS_TO_MESH_CONDITION`, `MAPS_TO_MESH_INTERVENTION` — pending tuning validation of multiplicative scoring
 
@@ -196,6 +225,40 @@ Flexible trial selection → subgraph extraction → GraphSAGE training → inte
 
 **Deduplication:** `_dedup_arm_matches()` picks highest-confidence match per `result_group_id` using priority sort + `drop_duplicates`.
 
+### 12. **TrialArm → drop_withdrawals Join Chain**
+
+**Problem:** `ctgov.drop_withdrawals` rows carry `result_group_id` but no arm title or composite key — there is no direct foreign key to `design_groups`.
+
+**Join chain:**
+```
+ctgov.drop_withdrawals.result_group_id
+    → ctgov.result_groups.id  (WHERE result_type = 'Participant Flow')
+    → TrialArm.id = nct_id | ctgov_group_code
+```
+`result_groups` is the bridge table: each Participant Flow group has a `ctgov_group_code` (P1, P2…) that is embedded in the TrialArm composite key. `drop_withdrawals` rows link to `result_groups` via `result_group_id`. Arm deduplication runs first so each `result_group_id` maps to exactly one TrialArm before withdrawal counts are joined.
+
+**Why preserve `result_group_id` on TrialArm:** Needed to generate `withdrawal_entry_edges.parquet`. Without it, the `result_group_id` → TrialArm.id mapping is lost after deduplication.
+
+**SQL bucketing — CTE pre-normalization pattern:**
+Applying `LOWER(TRIM())` in a CTE alias first (not inline in the CASE) avoids PostgreSQL `GroupingError` when grouping by normalized values:
+```sql
+WITH norm AS (
+    SELECT nct_id, result_group_id,
+           LOWER(TRIM(period)) AS period_normalized,
+           LOWER(TRIM(reason)) AS reason_normalized,
+           count
+    FROM ctgov.drop_withdrawals
+    WHERE reason IS NOT NULL AND count IS NOT NULL
+)
+SELECT ...,
+    CASE WHEN reason_normalized LIKE '%adverse event%' ... END AS reason_bucket,
+    SUM(count) AS withdrawal_count
+FROM norm
+GROUP BY nct_id, result_group_id, period_normalized, reason_normalized
+```
+
+**9 reason buckets:** adverse_event, subject_voluntary, lost_to_followup, death, protocol_deviation, physician_decision, sponsor_decision, lack_of_efficacy, ineligibility (+other catch-all).
+
 ---
 
 ## Workflow: From Data to Embeddings
@@ -262,7 +325,7 @@ Flexible trial selection → subgraph extraction → GraphSAGE training → inte
 ## Next Steps & TODOs
 
 ### Proposal Stage (Current — `test/analysis_proposal`)
-1. **Wire up DB connections** in proposal notebook — replace `execute_cypher()` placeholder with live `graph_conn.execute()`
+1. ~~**Wire up DB connections**~~ — done: LadybugDB + postgres engine wired into proposal notebook cell `c64d9e5e`
 2. **Run Section 7 MeSH checks** — confirm actual global missing rate vs ~2% assumption
 3. **Run Section 8 time series** — confirm `start_date` parsing works, validate `n_areas` distribution
 4. **Bootstrap comparison** — identify areas with statistically significant COVID-era duration shifts
@@ -319,6 +382,48 @@ results = bootstrap_area_comparison(df_ts, n_boots=5000)
 FILTERS = dict(conditions=[...], countries='United States')
 study_ids = select_study_ids(**FILTERS, match='all', limit=5000,
                               min_enrollment=0.0, exclude_unknown_status=True)
+```
+
+### WithdrawalEntry Cypher Test Queries
+
+```cypher
+// 1. Node count by reason bucket — verify all 9 buckets populated
+MATCH (w:WithdrawalEntry)
+RETURN w.reason_bucket, count(*) AS n
+ORDER BY n DESC;
+
+// 2. All withdrawal entries for one study (replace NCT_ID with real id)
+MATCH (s:Study {nct_id: 'NCT01234567'})-[:HAS_ARM]->(a:TrialArm)-[:HAS_WITHDRAWAL_ENTRY]->(w:WithdrawalEntry)
+RETURN a.flow_arm_title, w.period_normalized, w.reason_normalized, w.reason_bucket, w.withdrawal_count
+ORDER BY w.period_normalized, w.withdrawal_count DESC;
+
+// 3. Top studies by death withdrawals in 'overall study' period
+MATCH (s:Study)-[:HAS_ARM]->(a:TrialArm)-[:HAS_WITHDRAWAL_ENTRY]->(w:WithdrawalEntry)
+WHERE w.period_normalized = 'overall study'
+  AND w.reason_bucket = 'death'
+RETURN s.nct_id, a.flow_arm_title, w.withdrawal_count
+ORDER BY w.withdrawal_count DESC
+LIMIT 20;
+
+// 4. Studies with sponsor_decision withdrawals (terminated for business reasons)
+MATCH (s:Study)-[:HAS_ARM]->(a:TrialArm)-[:HAS_WITHDRAWAL_ENTRY]->(w:WithdrawalEntry)
+WHERE w.reason_bucket = 'sponsor_decision'
+RETURN s.nct_id, s.overall_status, sum(w.withdrawal_count) AS total
+ORDER BY total DESC
+LIMIT 20;
+
+// 5. Full bucket breakdown for a specific arm (replace composite key)
+MATCH (a:TrialArm {id: 'NCT01234567|P1'})-[:HAS_WITHDRAWAL_ENTRY]->(w:WithdrawalEntry)
+RETURN w.period_normalized, w.reason_bucket, w.reason_normalized, w.withdrawal_count
+ORDER BY w.period_normalized, w.withdrawal_count DESC;
+
+// 6. Adverse event withdrawal rate by overall_status
+MATCH (s:Study)-[:HAS_ARM]->(a:TrialArm)-[:HAS_WITHDRAWAL_ENTRY]->(w:WithdrawalEntry)
+WHERE w.reason_bucket = 'adverse_event'
+RETURN s.overall_status,
+       count(DISTINCT s.nct_id) AS study_count,
+       sum(w.withdrawal_count) AS total_ae_withdrawals
+ORDER BY total_ae_withdrawals DESC;
 ```
 
 ### Interactive Exploration (GraphSAGE notebook)
