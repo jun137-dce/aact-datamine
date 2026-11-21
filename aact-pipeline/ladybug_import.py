@@ -19,7 +19,8 @@ NODE_FILES = [
     ("sponsors.parquet",         "Sponsor",      "id"),
     ("facilities.parquet",       "Facility",     "id"),
     ("mesh_terms.parquet",       "MeshTerm",     "id"),
-    ("trial_arms.parquet",       "TrialArm",     "id"),
+    ("trial_arms.parquet",                  "TrialArm",         "id"),
+    ("withdrawal_reason_lookup.parquet",    "WithdrawalEntry",  "id"),
 ]
 
 # Embedding parquets to merge onto node tables before import: node_table → filename
@@ -41,7 +42,8 @@ EDGE_FILES = [
     ("mesh_hierarchy_edges.parquet",            "IS_A",                      "MeshTerm",  "MeshTerm"),
     ("maps_to_mesh_condition_edges.parquet",    "MAPS_TO_MESH_CONDITION",    "Condition", "MeshTerm",  {"weight": "DOUBLE"}),
     ("maps_to_mesh_intervention_edges.parquet", "MAPS_TO_MESH_INTERVENTION", "Intervention", "MeshTerm", {"weight": "DOUBLE"}),
-    ("trial_arm_edges.parquet",                 "HAS_ARM",                   "Study",     "TrialArm"),
+    ("trial_arm_edges.parquet",                 "HAS_ARM",                   "Study",        "TrialArm"),
+    ("withdrawal_entry_edges.parquet",          "HAS_WITHDRAWAL_ENTRY",      "TrialArm",     "WithdrawalEntry"),
 ]
 
 EMBEDDING_DIM = 768

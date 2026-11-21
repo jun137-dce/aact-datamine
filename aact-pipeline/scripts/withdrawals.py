@@ -354,10 +354,33 @@ def build_trial_arms(engine, output_dir):
 
     print("Building withdrawal reason lookup (period × reason × bucket)...")
     lookup = pd.read_sql(_REASON_LOOKUP_SQL, engine)
+    # Stable primary key for WithdrawalEntry nodes
+    lookup["id"] = (
+        lookup["nct_id"] + "|" +
+        lookup["result_group_id"].astype(str) + "|" +
+        lookup["period_normalized"].fillna("") + "|" +
+        lookup["reason_normalized"].fillna("")
+    )
+    # Reorder: id first
+    cols = ["id"] + [c for c in lookup.columns if c != "id"]
+    lookup = lookup[cols].drop_duplicates(subset=["id"]).reset_index(drop=True)
     lookup_path = os.path.join(output_dir, "withdrawal_reason_lookup.parquet")
     lookup.to_parquet(lookup_path, index=False)
     n_distinct = lookup[["reason_normalized", "reason_bucket"]].drop_duplicates()
     print(f"  {len(lookup):,} rows, {len(n_distinct)} distinct reason strings → {lookup_path}")
+
+    # HAS_WITHDRAWAL_ENTRY edges: TrialArm.id → WithdrawalEntry.id via result_group_id
+    arm_ids = nodes[["id", "result_group_id"]].rename(columns={"id": "source_id"})
+    entry_ids = lookup[["id", "result_group_id"]].rename(columns={"id": "target_id"})
+    entry_edges = (
+        arm_ids.merge(entry_ids, on="result_group_id", how="inner")
+               [["source_id", "target_id"]]
+               .drop_duplicates()
+               .reset_index(drop=True)
+    )
+    entry_edges_path = os.path.join(output_dir, "withdrawal_entry_edges.parquet")
+    entry_edges.to_parquet(entry_edges_path, index=False)
+    print(f"  {len(entry_edges):,} HAS_WITHDRAWAL_ENTRY edges → {entry_edges_path}")
 
     print("Computing study-level withdrawal features...")
     study_feats = compute_withdrawal_study_features(df)
