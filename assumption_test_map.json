@@ -1,0 +1,1555 @@
+{
+  "meta": {
+    "title": "AACT graph assumption-test toolbox: slide tests mapped to LadybugDB schema",
+    "as_of": "2026-11-20",
+    "scope": "Raw Study/Sponsor/Facility/Intervention/Condition/MeshTerm properties and edges as loaded by ladybug_import.py, including HAS_MESH_CONDITION, HAS_MESH_INTERVENTION and IS_A. Excludes embed.py, all bert_embedding fields, preprocess.py encodings, and MAPS_TO_MESH_* similarity edges.",
+    "working_question": "See hypotheses. Before/after COVID uses covid_transition, covid_overlap_days, covid_disrupted, covid_period (features.py cut points 2020-03-01, 2022-01-01).",
+    "subset": "Any FILTERS selection. The ~300 US kidney cancer set was a sanity check; real runs use a much larger set, with a few chosen cases bootstrapped heavily.",
+    "outcome": "study_duration_days (start_date to completion_date); primary_duration_days as a secondary outcome",
+    "scopes": {
+      "us": "FILTERS countries=United States (current notebook setting)",
+      "global": "same condition filter, no country filter; needs a second select_study_ids() run, no code change"
+    },
+    "covid_fields": {
+      "_note": "All before/after COVID tests use these Study fields from features.py; no new cutoffs are introduced.",
+      "covid_transition": "start->completion category (pre_pre, pre_during, pre_post, during_during, during_post, post_post): main grouping for before/after contrasts",
+      "covid_overlap_days": "days of the trial inside the COVID window: continuous exposure in the duration model",
+      "covid_disrupted": "started before 2020-03-01 and completed on or after it: binary contrast",
+      "covid_period": "start-based period: used only to split time series spans (start_date drives the series)"
+    },
+    "why_graph": "LadybugDB mirrors the AACT tables (from the pg_dump) as nodes and edges, so Cypher shows how the selected tables relate as they do in SQL, and derived features (covid_transition, covid_overlap_days, covid_disrupted) live on the Study node beside the source fields for a much larger set.",
+    "goal": "Examine links between average clinical trial duration and the COVID-19 pandemic.",
+    "aims": [
+      "Predict average drug trial duration and estimate patient enrollment across disease areas.",
+      "Examine the relationship between trial duration and successful completion across the COVID-19 span in multiple therapeutic areas."
+    ],
+    "population": "All 545,294 AACT studies; drug trials = Study with HAS_INTERVENTION to Intervention.intervention_type = DRUG. US kidney cancer set was a sanity check."
+  },
+  "missing_codes": {
+    "_note": "features.py load_study_features() fills missing values before import, so LadybugDB has no nulls for these fields. Missingness tests must read raw ctgov.studies in Postgres, or treat these codes as missing.",
+    "numeric_filled_with_0": [
+      "enrollment",
+      "number_of_arms",
+      "study_duration_days",
+      "primary_duration_days",
+      "followup_days",
+      "covid_overlap_days"
+    ],
+    "boolean_filled_with_false": [
+      "covid_disrupted",
+      "is_fda_regulated_drug",
+      "is_fda_regulated_device",
+      "has_dmc"
+    ],
+    "categorical_filled_with_unknown": [
+      "covid_period",
+      "covid_transition",
+      "overall_status",
+      "why_stopped",
+      "enrollment_type",
+      "phase",
+      "study_type",
+      "completion_date_type",
+      "primary_completion_date_type"
+    ],
+    "derived_caveats": {
+      "covid_overlap_days": "Uses CURRENT_DATE when completion_date is null, so the value changes with the run date.",
+      "followup_days": "Computed as completion_date - primary_completion_date (post-primary follow-up), not schedule overrun as the SQL comment says.",
+      "study_duration_days": "Mixes Actual and Anticipated completion dates; split on completion_date_type.",
+      "covid_stopped": "Keyword match on why_stopped; 0 for every study without free text."
+    },
+    "selection_filters": {
+      "min_enrollment": "enrollment > 0 drops studies whose enrollment was missing (coded 0) and real zero-enrollment withdrawals.",
+      "exclude_unknown_status": "Drops UNKNOWN status, which AACT assigns to studies not updated in 2+ years; possibly related to disruption."
+    }
+  },
+  "schema": {
+    "Study": {
+      "key": "nct_id",
+      "fields": {
+        "enrollment": {
+          "kind": "count",
+          "raw": "ctgov.studies.enrollment"
+        },
+        "enrollment_type": {
+          "kind": "categorical",
+          "values": [
+            "ACTUAL",
+            "ESTIMATED"
+          ],
+          "raw": "ctgov.studies.enrollment_type"
+        },
+        "overall_status": {
+          "kind": "categorical",
+          "raw": "ctgov.studies.overall_status"
+        },
+        "why_stopped": {
+          "kind": "free_text",
+          "raw": "ctgov.studies.why_stopped"
+        },
+        "phase": {
+          "kind": "categorical",
+          "raw": "ctgov.studies.phase"
+        },
+        "number_of_arms": {
+          "kind": "count",
+          "raw": "ctgov.studies.number_of_arms"
+        },
+        "has_dmc": {
+          "kind": "boolean",
+          "raw": "ctgov.studies.has_dmc"
+        },
+        "start_date": {
+          "kind": "date",
+          "raw": "ctgov.studies.start_date"
+        },
+        "completion_date": {
+          "kind": "date",
+          "raw": "ctgov.studies.completion_date"
+        },
+        "primary_completion_date": {
+          "kind": "date",
+          "raw": "ctgov.studies.primary_completion_date"
+        },
+        "completion_date_type": {
+          "kind": "categorical",
+          "values": [
+            "ACTUAL",
+            "ESTIMATED"
+          ],
+          "raw": "ctgov.studies.completion_date_type"
+        },
+        "covid_period": {
+          "kind": "derived_categorical",
+          "from": [
+            "start_date"
+          ]
+        },
+        "covid_transition": {
+          "kind": "derived_categorical",
+          "from": [
+            "start_date",
+            "completion_date"
+          ]
+        },
+        "covid_overlap_days": {
+          "kind": "derived_continuous",
+          "from": [
+            "start_date",
+            "completion_date"
+          ]
+        },
+        "covid_stopped": {
+          "kind": "derived_boolean",
+          "from": [
+            "why_stopped"
+          ]
+        },
+        "study_duration_days": {
+          "kind": "derived_continuous",
+          "from": [
+            "start_date",
+            "completion_date"
+          ]
+        },
+        "primary_duration_days": {
+          "kind": "derived_continuous",
+          "from": [
+            "start_date",
+            "primary_completion_date"
+          ]
+        },
+        "followup_days": {
+          "kind": "derived_continuous",
+          "from": [
+            "primary_completion_date",
+            "completion_date"
+          ]
+        },
+        "disease_area_*": {
+          "kind": "binary indicator per area (0/1), 25 columns from mesh.py DISEASE_AREA_MAP",
+          "columns": [
+            "disease_area_infections_bacterial",
+            "disease_area_infections_viral",
+            "disease_area_infections_parasitic",
+            "disease_area_infections_std",
+            "disease_area_neoplasms",
+            "disease_area_cardiovascular",
+            "disease_area_respiratory",
+            "disease_area_neurological",
+            "disease_area_digestive",
+            "disease_area_musculoskeletal",
+            "disease_area_skin_connective_tissue",
+            "disease_area_ophthalmology",
+            "disease_area_ent",
+            "disease_area_urologic",
+            "disease_area_female_urogenital",
+            "disease_area_hematologic",
+            "disease_area_immune",
+            "disease_area_endocrine",
+            "disease_area_metabolic_nutritional",
+            "disease_area_congenital_genetic",
+            "disease_area_chemically_induced",
+            "disease_area_trauma",
+            "disease_area_pathological_conditions",
+            "disease_area_psychiatric",
+            "disease_area_dental_oral"
+          ],
+          "note": "Multi-hot: a trial can be 1 in several areas. A trial with all zeros has no matched ancestor; treat it as \"no area\", not as missing at random."
+        }
+      }
+    },
+    "Sponsor": {
+      "key": "id",
+      "fields": {
+        "name": {
+          "kind": "label"
+        },
+        "agency_class": {
+          "kind": "categorical"
+        }
+      }
+    },
+    "Facility": {
+      "key": "id (\"lat|lon\" or name)",
+      "fields": {
+        "name": {
+          "kind": "label"
+        },
+        "city": {
+          "kind": "categorical"
+        },
+        "country": {
+          "kind": "categorical"
+        },
+        "lat": {
+          "kind": "continuous"
+        },
+        "lon": {
+          "kind": "continuous"
+        }
+      }
+    },
+    "Intervention": {
+      "key": "id",
+      "fields": {
+        "name": {
+          "kind": "label"
+        },
+        "intervention_type": {
+          "kind": "categorical"
+        }
+      }
+    },
+    "Condition": {
+      "key": "id",
+      "fields": {
+        "name": {
+          "kind": "label"
+        }
+      }
+    },
+    "edges": {
+      "HAS_CONDITION": {
+        "from": "Study",
+        "to": "Condition"
+      },
+      "HAS_INTERVENTION": {
+        "from": "Study",
+        "to": "Intervention"
+      },
+      "IS_LEAD_SPONSOR": {
+        "from": "Study",
+        "to": "Sponsor"
+      },
+      "IS_COLLABORATOR": {
+        "from": "Study",
+        "to": "Sponsor"
+      },
+      "HAS_FACILITY": {
+        "from": "Study",
+        "to": "Facility"
+      },
+      "HAS_MESH_CONDITION": {
+        "from": "Study",
+        "to": "MeshTerm",
+        "source": "ctgov.browse_conditions"
+      },
+      "HAS_MESH_INTERVENTION": {
+        "from": "Study",
+        "to": "MeshTerm",
+        "source": "ctgov.browse_interventions"
+      },
+      "IS_A": {
+        "from": "MeshTerm",
+        "to": "MeshTerm",
+        "source": "NLM MeSH hierarchy"
+      }
+    },
+    "MeshTerm": {
+      "key": "id (downcase_mesh_term)",
+      "fields": {
+        "name": {
+          "kind": "label"
+        }
+      },
+      "notes": "Study links are leaf terms only (mesh_type = mesh-list). Ancestors reachable via IS_A edges, which are empty in lean mode (no NLM XML)."
+    }
+  },
+  "tests": [
+    {
+      "id": "G1",
+      "function": "graph_sql_reconciliation",
+      "assumption": "graph faithfully mirrors the SQL tables",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "3, 39"
+      },
+      "targets": {
+        "edges": [
+          "HAS_CONDITION",
+          "HAS_INTERVENTION",
+          "IS_LEAD_SPONSOR",
+          "IS_COLLABORATOR",
+          "HAS_FACILITY",
+          "HAS_MESH_CONDITION",
+          "HAS_MESH_INTERVENTION"
+        ]
+      },
+      "source": "ladybug edge counts vs postgres ctgov.conditions, interventions, sponsors, facilities, browse_conditions, browse_interventions",
+      "method": "For each edge type: distinct (nct_id, target) pairs in the graph vs in SQL; list studies whose degree differs. Also: Study count vs ctgov.studies.",
+      "output": "Per-edge-type count table + mismatched nct_ids",
+      "cypher": "MATCH (s:Study)-[r:<EDGE_TYPE>]->(t) RETURN count(DISTINCT [s.nct_id, t.id]) AS pairs"
+    },
+    {
+      "id": "G2",
+      "function": "derived_feature_recompute",
+      "assumption": "derived features match their definition",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "34-36"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "covid_transition",
+          "covid_overlap_days",
+          "covid_disrupted",
+          "study_duration_days"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Recompute each derived feature from the dates already on the node (pandas, fixed reference date instead of CURRENT_DATE) and diff against the stored value. Same function validates any new feature you add.",
+      "output": "Mismatch count per feature",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.start_date, s.completion_date, s.primary_completion_date, s.covid_transition, s.covid_overlap_days, s.covid_disrupted, s.study_duration_days"
+    },
+    {
+      "id": "M1",
+      "function": "missing_rate_raw",
+      "assumption": "missingness",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "55-58"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment",
+          "number_of_arms",
+          "start_date",
+          "completion_date",
+          "primary_completion_date",
+          "phase",
+          "why_stopped",
+          "has_dmc"
+        ]
+      },
+      "source": "postgres:ctgov.studies (raw, before fillna)",
+      "method": "Per-field null rate and per-field sentinel rate (0 / False / 'unknown') in LadybugDB; compare the two.",
+      "output": "Table field x {raw_null_rate, sentinel_rate, gap}",
+      "cypher": "sentinel side: MATCH (s:Study) RETURN s.*  ; raw side: postgres"
+    },
+    {
+      "id": "M2",
+      "function": "missing_pattern_matrix",
+      "assumption": "missingness",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "59-61"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": "all in M1"
+      },
+      "source": "postgres:ctgov.studies",
+      "method": "Row x field missingness matrix sorted by pattern; count rows with 1, 2, 3+ missing fields.",
+      "output": "Pattern plot + pattern frequency table",
+      "cypher": "postgres ctgov.studies"
+    },
+    {
+      "id": "M3",
+      "function": "missing_mechanism_test",
+      "assumption": "missingness (MCAR vs MAR)",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "57-58"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment",
+          "completion_date",
+          "why_stopped"
+        ]
+      },
+      "source": "postgres:ctgov.studies joined to LadybugDB Study ids",
+      "method": "Logistic regression of is_missing(field) on observed covariates (start year, phase, overall_status, sponsor agency_class). Significant predictors reject MCAR; consistent with MAR.",
+      "pass_criterion": "No covariate significant at 0.05 after correction => treat as MCAR",
+      "output": "Coefficient table per field",
+      "cypher": "postgres ctgov.studies joined on nct_id from MATCH (s:Study) RETURN s.nct_id"
+    },
+    {
+      "id": "M4",
+      "function": "mnar_flags",
+      "assumption": "missingness (MNAR)",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "58, 64"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment_type",
+          "completion_date_type",
+          "overall_status"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Cross-tab ESTIMATED vs ACTUAL against covid_transition and overall_status. ESTIMATED values on still-running trials are censored, not missing at random.",
+      "output": "Mosaic plot + chi-square table",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.enrollment_type, s.completion_date_type, s.overall_status, s.covid_transition"
+    },
+    {
+      "id": "M5",
+      "function": "selection_filter_audit",
+      "assumption": "missingness / sampling bias",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "5, 39"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment",
+          "overall_status"
+        ]
+      },
+      "source": "postgres:ctgov.studies (kidney cancer, US) vs selected subset",
+      "method": "Compare covid_transition, phase and sponsor class shares before and after min_enrollment and exclude_unknown_status filters.",
+      "output": "Before/after proportion table with bootstrap CIs",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.enrollment, s.overall_status, s.phase, s.covid_transition"
+    },
+    {
+      "id": "M6",
+      "function": "impute_mice",
+      "assumption": "missingness (remedy)",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "62-76"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment",
+          "number_of_arms",
+          "durations"
+        ]
+      },
+      "source": "postgres:ctgov.studies",
+      "method": "Only if M3 says MAR: MICE with m >= 5 imputations; compare model estimates across imputations vs complete-case.",
+      "output": "Estimate spread across imputations",
+      "cypher": "postgres ctgov.studies"
+    },
+    {
+      "id": "MS1",
+      "function": "mesh_coverage",
+      "assumption": "missingness (MNAR) of MeSH links",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "57-58, 64"
+      },
+      "targets": {
+        "edges": [
+          "HAS_MESH_CONDITION",
+          "HAS_MESH_INTERVENTION"
+        ],
+        "fields": [
+          "Intervention.intervention_type",
+          "phase",
+          "start_date",
+          "study_duration_days"
+        ]
+      },
+      "source": "ladybug:Study OPTIONAL MATCH mesh edges",
+      "method": "Share of studies with zero condition / intervention MeSH edges, cross-tabbed by intervention_type, phase and covid_transition; compare duration distributions of with vs without MeSH (two-sample bootstrap).",
+      "output": "Coverage table + duration difference CI",
+      "cypher": "MATCH (s:Study) OPTIONAL MATCH (s)-[:HAS_MESH_CONDITION]->(mc:MeshTerm) OPTIONAL MATCH (s)-[:HAS_MESH_INTERVENTION]->(mi:MeshTerm) RETURN s.nct_id, s.phase, s.covid_transition, s.study_duration_days, count(DISTINCT mc) AS n_cond_mesh, count(DISTINCT mi) AS n_int_mesh"
+    },
+    {
+      "id": "MS2",
+      "function": "mesh_rollup",
+      "assumption": "grouping level for MeSH",
+      "slides": {
+        "deck": "16_HierarchicalBayesModels",
+        "pages": "4-6, 52-55"
+      },
+      "targets": {
+        "edges": [
+          "HAS_MESH_CONDITION",
+          "HAS_MESH_INTERVENTION",
+          "IS_A"
+        ]
+      },
+      "source": "ladybug:MeshTerm",
+      "method": "Count studies per leaf term and per IS_A ancestor level; pick the lowest level where most groups have 5+ studies. If IS_A is empty, fall back to browse_* mesh-ancestor terms.",
+      "output": "Group size table per level",
+      "cypher": "MATCH (s:Study)-[:HAS_MESH_CONDITION]->(m:MeshTerm) OPTIONAL MATCH (m)-[:IS_A*1..3]->(a:MeshTerm) RETURN m.id, a.id, count(DISTINCT s) AS n_studies"
+    },
+    {
+      "id": "MS3",
+      "function": "mesh_multimembership",
+      "assumption": "one group per study",
+      "slides": {
+        "deck": "02_VisualizationOfLargeComplexData",
+        "pages": "30-34"
+      },
+      "targets": {
+        "edges": [
+          "HAS_MESH_CONDITION",
+          "HAS_MESH_INTERVENTION"
+        ]
+      },
+      "source": "ladybug:edges",
+      "method": "Distribution of MeSH terms per study; co-occurrence heat map of condition x intervention terms. Decide: primary term per study, or multi-membership weights 1/k.",
+      "output": "Terms-per-study histogram + co-occurrence heat map",
+      "cypher": "MATCH (s:Study)-[:HAS_MESH_CONDITION]->(mc:MeshTerm), (s)-[:HAS_MESH_INTERVENTION]->(mi:MeshTerm) RETURN mc.name, mi.name, count(DISTINCT s) AS n"
+    },
+    {
+      "id": "Q1",
+      "function": "success_label_qc",
+      "assumption": "success/completion criteria are well defined",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "55-64"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "overall_status",
+          "why_stopped",
+          "completion_date_type",
+          "primary_completion_date_type",
+          "covid_stopped",
+          "enrollment_type"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Map overall_status to success = COMPLETED with ACTUAL completion date; failure = TERMINATED, WITHDRAWN, SUSPENDED; open = RECRUITING, ACTIVE_NOT_RECRUITING, NOT_YET_RECRUITING, ENROLLING_BY_INVITATION (censored, excluded from success rate); UNKNOWN reported separately. Tabulate why_stopped keywords (enrollment, funding, safety, efficacy, business, COVID) into reason categories; measure how many free-text reasons fall outside every category.",
+      "output": "Status x label table + why_stopped reason counts + unmatched share",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.overall_status, s.why_stopped, s.completion_date_type, s.primary_completion_date_type, s.covid_stopped, s.covid_transition"
+    },
+    {
+      "id": "Q2",
+      "function": "duration_success_model",
+      "assumption": "H-F: duration and success are linked",
+      "slides": {
+        "deck": "16_HierarchicalBayesModels",
+        "pages": "32-44"
+      },
+      "targets": {
+        "model": "success ~ Bernoulli(logit(log primary_duration + covid_transition + covid_overlap_days + phase + has_collaborator + (1|area) + (1|lead sponsor)))"
+      },
+      "source": "Q1 labels + ladybug:Study",
+      "method": "Hierarchical logistic model on closed trials only; plot success probability vs duration by covid_transition and area.",
+      "output": "Success vs duration curves by area",
+      "cypher": "from Q1 frame"
+    },
+    {
+      "id": "TA1",
+      "function": "therapeutic_area_assign",
+      "assumption": "each trial has a usable therapeutic area",
+      "slides": {
+        "deck": "16_HierarchicalBayesModels",
+        "pages": "4-6"
+      },
+      "targets": {
+        "edges": [
+          "HAS_MESH_CONDITION",
+          "IS_A"
+        ],
+        "fields": [
+          "disease_area_* (mesh.py DISEASE_AREA_MAP, 25 top-level MeSH areas)"
+        ]
+      },
+      "source": "ladybug:Study disease_area_* columns",
+      "method": "Show the discrete values: per-area count and share of trials with value 1; trials with 0 areas, 1 area, 2+ areas; area x area co-occurrence heat map; area counts by covid_transition (mosaic). Flag areas under 30 trials per covid_transition cell.",
+      "output": "Area bar chart + areas-per-trial table + co-occurrence heat map + mosaic",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.covid_transition, s.disease_area_infections_bacterial, s.disease_area_infections_viral, s.disease_area_infections_parasitic, s.disease_area_infections_std, s.disease_area_neoplasms, s.disease_area_cardiovascular, s.disease_area_respiratory, s.disease_area_neurological, s.disease_area_digestive, s.disease_area_musculoskeletal, s.disease_area_skin_connective_tissue, s.disease_area_ophthalmology, s.disease_area_ent, s.disease_area_urologic, s.disease_area_female_urogenital, s.disease_area_hematologic, s.disease_area_immune, s.disease_area_endocrine, s.disease_area_metabolic_nutritional, s.disease_area_congenital_genetic, s.disease_area_chemically_induced, s.disease_area_trauma, s.disease_area_pathological_conditions, s.disease_area_psychiatric, s.disease_area_dental_oral"
+    },
+    {
+      "id": "TA2",
+      "function": "covid_effect_by_area_location",
+      "assumption": "COVID effect differs by therapeutic area and location",
+      "slides": {
+        "deck": "02_VisualizationOfLargeComplexData",
+        "pages": "32, 45-50"
+      },
+      "targets": {
+        "fields": [
+          "disease_area_*",
+          "Facility.country",
+          "Facility.city",
+          "covid_transition",
+          "study_duration_days",
+          "success (Q1)"
+        ]
+      },
+      "source": "ladybug:Study disease_area_* + HAS_FACILITY->Facility",
+      "method": "For each area (value 1) x location (country globally; city in the US) cell with enough trials: COVID-vs-pre contrast in median duration, spread ratio (V1) and success rate, each with a bootstrap CI and permutation p-value. Correct across cells with Benjamini-Hochberg FDR. Show as a heat map of effect size (area rows x location columns) with non-significant cells greyed. A multi-area trial counts in each of its areas; a multi-site trial counts in each location (weights 1/k to keep totals honest). Confirm the pattern in V4 with (covid_transition | area) and (covid_transition | country) terms.",
+      "pass_criterion": "Cell flagged as a COVID hotspot if FDR-adjusted q < 0.05 and the CI excludes no change",
+      "output": "Area x location effect heat map + ranked hotspot table",
+      "cypher": "MATCH (s:Study)-[:HAS_FACILITY]->(f:Facility) RETURN s.nct_id, f.country, f.city, s.covid_transition, s.study_duration_days, s.overall_status, s.disease_area_infections_bacterial, s.disease_area_infections_viral, s.disease_area_infections_parasitic, s.disease_area_infections_std, s.disease_area_neoplasms, s.disease_area_cardiovascular, s.disease_area_respiratory, s.disease_area_neurological, s.disease_area_digestive, s.disease_area_musculoskeletal, s.disease_area_skin_connective_tissue, s.disease_area_ophthalmology, s.disease_area_ent, s.disease_area_urologic, s.disease_area_female_urogenital, s.disease_area_hematologic, s.disease_area_immune, s.disease_area_endocrine, s.disease_area_metabolic_nutritional, s.disease_area_congenital_genetic, s.disease_area_chemically_induced, s.disease_area_trauma, s.disease_area_pathological_conditions, s.disease_area_psychiatric, s.disease_area_dental_oral"
+    },
+    {
+      "id": "C1",
+      "function": "duration_censoring_check",
+      "assumption": "durations are complete (no right truncation)",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "58"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "start_date",
+          "completion_date",
+          "completion_date_type",
+          "overall_status"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "By start year: share ESTIMATED completion and median ACTUAL duration. Recent start cohorts only contain trials that finished fast, so their durations look short. Restrict each cohort to equal follow-up (e.g. completed within N years of start) before comparing pre and post COVID.",
+      "output": "Share-estimated and median-duration by start year",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.start_date, s.completion_date, s.completion_date_type, s.overall_status, s.study_duration_days"
+    },
+    {
+      "id": "D1",
+      "function": "date_consistency",
+      "assumption": "data validity",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "34-36"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "start_date",
+          "primary_completion_date",
+          "completion_date",
+          "study_duration_days",
+          "primary_duration_days",
+          "followup_days"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Count negative durations, completion before start, primary after completion, and zero durations that are really fills.",
+      "output": "Violation counts with nct_ids",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.start_date, s.primary_completion_date, s.completion_date, s.study_duration_days, s.primary_duration_days, s.followup_days"
+    },
+    {
+      "id": "D1b",
+      "function": "covid_field_consistency",
+      "assumption": "derived COVID fields are internally consistent",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "34-36"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "covid_transition",
+          "covid_overlap_days",
+          "covid_disrupted",
+          "covid_period",
+          "start_date",
+          "completion_date"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Check covid_overlap_days is 0 for pre_pre and post_post and > 0 otherwise; covid_disrupted matches pre_during/pre_post; count unknown and other; flag overlap values computed from CURRENT_DATE (completion_date null).",
+      "output": "Contradiction counts with nct_ids",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.start_date, s.completion_date, s.covid_period, s.covid_transition, s.covid_overlap_days, s.covid_disrupted"
+    },
+    {
+      "id": "D2",
+      "function": "distribution_profile",
+      "assumption": "distribution shape",
+      "slides": {
+        "deck": "02_VisualizationOfLargeComplexData",
+        "pages": "16-20"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment",
+          "number_of_arms",
+          "study_duration_days",
+          "primary_duration_days",
+          "followup_days",
+          "covid_overlap_days"
+        ]
+      },
+      "source": "ladybug:Study (sentinels excluded)",
+      "method": "Histogram + KDE + box/violin by covid_transition; skewness, kurtosis; repeat on log scale.",
+      "output": "Facet plot + summary table",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.covid_transition, s.enrollment, s.number_of_arms, s.study_duration_days, s.primary_duration_days, s.followup_days, s.covid_overlap_days"
+    },
+    {
+      "id": "D3",
+      "function": "dispersion_index",
+      "assumption": "Poisson equidispersion",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "17-24"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment",
+          "number_of_arms"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Variance/mean overall and within covid_transition x phase cells; fit Poisson vs negative binomial and compare AIC.",
+      "pass_criterion": "Variance/mean near 1 => Poisson; >> 1 => negative binomial or log-normal",
+      "output": "Dispersion table + AIC comparison",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.covid_transition, s.phase, s.enrollment, s.number_of_arms"
+    },
+    {
+      "id": "D4",
+      "function": "zero_inflation_check",
+      "assumption": "zero inflation",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "3-16, 25-33"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "covid_overlap_days",
+          "covid_stopped",
+          "IS_COLLABORATOR degree"
+        ]
+      },
+      "source": "ladybug:Study, ladybug:IS_COLLABORATOR",
+      "method": "Observed zeros vs zeros expected under fitted Poisson/NB; fit ZIP / ZINB where excess is large.",
+      "output": "Observed vs expected zero counts",
+      "cypher": "MATCH (s:Study) OPTIONAL MATCH (s)-[:IS_COLLABORATOR]->(c:Sponsor) RETURN s.nct_id, s.covid_overlap_days, s.covid_stopped, count(c) AS n_collab"
+    },
+    {
+      "id": "D5",
+      "function": "outlier_influence",
+      "assumption": "no undue influence",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "34-54"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment",
+          "study_duration_days"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Fit baseline regression; compute residuals, leverage, Cook's distance; refit with Huber/robust loss and compare coefficients.",
+      "output": "Top-influence nct_ids + OLS vs robust coefficient table",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.covid_transition, s.covid_overlap_days, s.phase, s.enrollment, s.study_duration_days"
+    },
+    {
+      "id": "D6",
+      "function": "categorical_balance",
+      "assumption": "adequate cell sizes",
+      "slides": {
+        "deck": "02_VisualizationOfLargeComplexData",
+        "pages": "30-34"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "covid_transition",
+          "phase",
+          "overall_status",
+          "Sponsor.agency_class"
+        ]
+      },
+      "source": "ladybug:Study, ladybug:Sponsor",
+      "method": "Counts and mosaic plots of covid_transition x phase x agency_class; flag cells under 10 studies.",
+      "output": "Mosaic + sparse-cell list",
+      "cypher": "MATCH (s:Study)-[:IS_LEAD_SPONSOR]->(sp:Sponsor) RETURN s.covid_transition, s.phase, sp.agency_class, count(*) AS n"
+    },
+    {
+      "id": "D7",
+      "function": "degree_distribution",
+      "assumption": "edge distribution",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "17-24"
+      },
+      "targets": {
+        "edges": [
+          "HAS_FACILITY",
+          "HAS_INTERVENTION",
+          "HAS_CONDITION",
+          "IS_COLLABORATOR",
+          "IS_LEAD_SPONSOR"
+        ]
+      },
+      "source": "ladybug:edges",
+      "method": "Per-edge-type degree counts for Study and for target nodes; log-log plot; dispersion index.",
+      "output": "Degree summary per edge type",
+      "cypher": "MATCH (s:Study)-[r:<EDGE_TYPE>]->(t) RETURN s.nct_id, count(t) AS degree   // run once per edge type; repeat grouped by t.id for target degree"
+    },
+    {
+      "id": "I1",
+      "function": "sponsor_clustering_icc",
+      "assumption": "independence across studies",
+      "slides": {
+        "deck": "16_HierarchicalBayesModels",
+        "pages": "4-6"
+      },
+      "targets": {
+        "edges": [
+          "IS_LEAD_SPONSOR"
+        ],
+        "fields": [
+          "enrollment",
+          "study_duration_days",
+          "covid_stopped"
+        ]
+      },
+      "source": "ladybug:Study-IS_LEAD_SPONSOR->Sponsor",
+      "method": "Intraclass correlation of outcomes within lead sponsor; share of studies whose sponsor has 2+ studies.",
+      "pass_criterion": "ICC near 0 => pooled model acceptable; ICC > ~0.05 => partial pooling by sponsor",
+      "output": "ICC per outcome + sponsor size table",
+      "cypher": "MATCH (s:Study)-[:IS_LEAD_SPONSOR]->(sp:Sponsor) RETURN s.nct_id, sp.id AS sponsor, sp.agency_class, s.enrollment, s.study_duration_days, s.covid_stopped"
+    },
+    {
+      "id": "I1b",
+      "function": "sponsor_role_effects",
+      "assumption": "lead sponsor and collaborator status both shape duration, spread and success",
+      "slides": {
+        "deck": "02_VisualizationOfLargeComplexData",
+        "pages": "16-20, 45-50"
+      },
+      "targets": {
+        "edges": [
+          "IS_LEAD_SPONSOR",
+          "IS_COLLABORATOR"
+        ],
+        "fields": [
+          "Sponsor.agency_class",
+          "study_duration_days",
+          "covid_transition",
+          "success (Q1)"
+        ]
+      },
+      "source": "ladybug:Study-IS_LEAD_SPONSOR->Sponsor, Study-IS_COLLABORATOR->Sponsor",
+      "method": "Per study: lead sponsor id and agency_class, has_collaborator, n_collaborators, collaborator agency_class set. Plots: violin/box of log duration faceted by lead agency_class x has_collaborator x covid_transition; success rate bars with bootstrap CIs. Significance: bootstrap CIs on median and spread differences; Brown-Forsythe for spread; enter both in V4/Q2 as lead-sponsor random effect plus collaborator multi-membership effect (weights 1/n_collaborators) and has_collaborator fixed effect.",
+      "output": "Facet plots + bootstrap significance table",
+      "cypher": "MATCH (s:Study)-[:IS_LEAD_SPONSOR]->(l:Sponsor) OPTIONAL MATCH (s)-[:IS_COLLABORATOR]->(c:Sponsor) RETURN s.nct_id, l.id AS lead_id, l.agency_class AS lead_class, collect(c.id) AS collab_ids, collect(c.agency_class) AS collab_classes, s.study_duration_days, s.covid_transition, s.overall_status"
+    },
+    {
+      "id": "I2",
+      "function": "facility_overlap",
+      "assumption": "independence across studies",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "35-37"
+      },
+      "targets": {
+        "edges": [
+          "HAS_FACILITY"
+        ],
+        "fields": [
+          "Facility.city",
+          "Facility.lat",
+          "Facility.lon"
+        ]
+      },
+      "source": "ladybug:Study-HAS_FACILITY->Facility",
+      "method": "Study-study projection by shared facility; connected components and ICC by representative facility/city.",
+      "output": "Share of studies sharing a site + ICC by city",
+      "cypher": "MATCH (a:Study)-[:HAS_FACILITY]->(f:Facility)<-[:HAS_FACILITY]-(b:Study) WHERE a.nct_id < b.nct_id RETURN a.nct_id, b.nct_id, count(f) AS shared_sites"
+    },
+    {
+      "id": "I3",
+      "function": "temporal_autocorrelation",
+      "assumption": "independence over time",
+      "slides": {
+        "deck": "12_PropertiesOfTimeSeries",
+        "pages": "15-25"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "start_date",
+          "enrollment",
+          "study_duration_days"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Order studies by start_date; ACF/PACF of residuals from baseline model; Ljung-Box test.",
+      "pass_criterion": "Ljung-Box p > 0.05 => residuals behave like white noise",
+      "output": "ACF plot + Ljung-Box table",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.start_date, s.study_duration_days, s.enrollment ORDER BY s.start_date"
+    },
+    {
+      "id": "I4",
+      "function": "residual_spatial_check",
+      "assumption": "independence over space",
+      "slides": {
+        "deck": "IntroductionToClustering",
+        "pages": "8-29, 38-46"
+      },
+      "targets": {
+        "node": "Facility",
+        "fields": [
+          "lat",
+          "lon"
+        ]
+      },
+      "source": "ladybug:Facility",
+      "method": "Haversine distance between representative facilities; correlate residual differences with distance (Mantel-style); DBSCAN on lat/lon for site clusters.",
+      "output": "Residual vs distance plot + cluster labels",
+      "cypher": "MATCH (s:Study)-[:HAS_FACILITY]->(f:Facility) RETURN s.nct_id, f.id, f.lat, f.lon, f.city, f.country"
+    },
+    {
+      "id": "V1",
+      "function": "spread_change_test",
+      "assumption": "H-A: spread of duration changed",
+      "slides": {
+        "deck": "06b_IntroductionToBootstrap",
+        "pages": "26-33"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "study_duration_days",
+          "primary_duration_days"
+        ],
+        "groups": [
+          "covid_transition",
+          "start-year cohort",
+          "therapeutic area"
+        ]
+      },
+      "source": "ladybug:Study (C1 cohort-restricted, ACTUAL only)",
+      "method": "Brown-Forsythe (median-centred Levene) test of equal variance on log duration; bootstrap CIs (B=10,000, up to 100,000 for key areas) on the SD ratio, IQR ratio and MAD ratio between groups.",
+      "pass_criterion": "H-A supported if the CI of the spread ratio (COVID / pre) lies below 1",
+      "output": "Spread ratio table with CIs per area"
+    },
+    {
+      "id": "V2",
+      "function": "placebo_window",
+      "assumption": "H-B: the change is specific to the COVID window",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "40-47"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "start_date",
+          "study_duration_days"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Repeat V1 on every rolling 2-year start window from 2005 on; the COVID window should be an outlier in the distribution of placebo spread ratios. Also test the 2017-01-18 FDAAA Final Rule as a competing break.",
+      "output": "Placebo distribution plot with the COVID window marked"
+    },
+    {
+      "id": "V3",
+      "function": "truncation_artifact_sim",
+      "assumption": "H-A is not an artifact of the window",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "40-47"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "start_date",
+          "completion_date"
+        ]
+      },
+      "source": "simulated from pre-COVID duration distribution",
+      "method": "Simulate trials with no COVID effect; apply the same cohort and completion filters used in the analysis; measure how much spread shrinks from the filters alone.",
+      "output": "Expected spread ratio under no effect"
+    },
+    {
+      "id": "V4",
+      "function": "location_scale_model",
+      "assumption": "H-A, H-C, H-D in one model",
+      "slides": {
+        "deck": "16_HierarchicalBayesModels",
+        "pages": "32-51"
+      },
+      "targets": {
+        "model": "log duration ~ Normal(mu, sigma); mu = covid_transition + covid_overlap_days + phase + log enrollment + (1|area) + (1|intervention MeSH) + has_collaborator + (1|lead sponsor) + (1|collaborators, multi-membership); log sigma = covid_transition + (covid_transition|area)"
+      },
+      "source": "S1/TA1 frames",
+      "method": "Hierarchical Bayesian location-scale model in PyMC; posterior of the sigma contrast per area; compare to a constant-sigma model with LOO.",
+      "output": "Posterior sigma contrast per area + LOO table",
+      "cypher": "from S1 + TA1 frames"
+    },
+    {
+      "id": "V5",
+      "function": "mix_shift_decomposition",
+      "assumption": "H-B, H-E: spread change is within groups, not a change in trial mix",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "31-34"
+      },
+      "targets": {
+        "fields": [
+          "phase",
+          "Sponsor.agency_class",
+          "therapeutic area",
+          "Intervention.intervention_type",
+          "enrollment"
+        ]
+      },
+      "source": "ladybug:Study + edges",
+      "method": "Reweight pre-COVID trials to the COVID-era mix (stratified reweighting by phase x area x sponsor class x intervention type); compare spread before and after reweighting.",
+      "output": "Raw vs mix-adjusted spread ratio"
+    },
+    {
+      "id": "T1",
+      "function": "monthly_start_series",
+      "assumption": "time series construction",
+      "slides": {
+        "deck": "12_PropertiesOfTimeSeries",
+        "pages": "13-14"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "start_date",
+          "study_duration_days",
+          "primary_duration_days"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Monthly (or quarterly if sparse) series by start_date of median study_duration_days and of study counts, for US and global scopes and per MeSH group; flag empty periods. With the larger set, kidney cancer becomes one MeSH group among many.",
+      "output": "Monthly series dataframe",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.start_date, s.covid_period, s.study_duration_days, s.primary_duration_days, s.completion_date_type"
+    },
+    {
+      "id": "T2",
+      "function": "decompose_series",
+      "assumption": "trend and seasonality",
+      "slides": {
+        "deck": "12_PropertiesOfTimeSeries",
+        "pages": "33-49"
+      },
+      "targets": {
+        "series": "T1"
+      },
+      "source": "derived:T1",
+      "method": "STL decomposition; fit separately on the pre_covid and covid/post_covid spans of covid_period (by start_date) and compare seasonal components; seasonal ACF at lag 12.",
+      "output": "Decomposition plot",
+      "cypher": "from T1 frame"
+    },
+    {
+      "id": "T3",
+      "function": "stationarity_tests",
+      "assumption": "stationarity",
+      "slides": {
+        "deck": "12_PropertiesOfTimeSeries",
+        "pages": "50-71"
+      },
+      "targets": {
+        "series": "T1"
+      },
+      "source": "derived:T1",
+      "method": "ADF and KPSS on raw and differenced series.",
+      "pass_criterion": "ADF rejects unit root and KPSS does not reject stationarity",
+      "output": "Test table by differencing order",
+      "cypher": "from T1 frame"
+    },
+    {
+      "id": "T4",
+      "function": "changepoint_detection",
+      "assumption": "structural break at COVID",
+      "slides": {
+        "deck": "14_ComplexTimeSeries",
+        "pages": "27-37"
+      },
+      "targets": {
+        "series": "T1"
+      },
+      "source": "derived:T1",
+      "method": "Change-point detection (e.g. PELT) and STRAY anomalies; compare detected breaks with the features.py cut points that define covid_period/covid_transition (2020-03-01, 2022-01-01).",
+      "output": "Detected break dates vs COVID cut points",
+      "cypher": "from T1 frame"
+    },
+    {
+      "id": "T5",
+      "function": "sarima_baseline",
+      "assumption": "counterfactual trend",
+      "slides": {
+        "deck": "13_BasicTimeSeriesModels",
+        "pages": "30-61"
+      },
+      "targets": {
+        "series": "T1"
+      },
+      "source": "derived:T1",
+      "method": "Fit SARIMA on pre-2020-03 months; forecast the COVID window and compare observed counts to the forecast interval.",
+      "output": "Forecast vs observed plot",
+      "cypher": "from T1 frame"
+    },
+    {
+      "id": "H1",
+      "function": "hotspot_change_by_place",
+      "assumption": "impact varies by place",
+      "slides": {
+        "deck": "02_VisualizationOfLargeComplexData",
+        "pages": "28-32, 45-50"
+      },
+      "targets": {
+        "edges": [
+          "HAS_FACILITY"
+        ],
+        "fields": [
+          "Facility.city",
+          "Facility.country",
+          "Facility.lat",
+          "Facility.lon",
+          "study_duration_days",
+          "covid_transition"
+        ]
+      },
+      "source": "ladybug:Study-HAS_FACILITY->Facility",
+      "method": "Median duration contrast across covid_transition groups and slope on covid_overlap_days by city (US) and country (global), with bootstrap CIs; hexbin map on lat/lon. Uses every facility edge, not only the representative first edge.",
+      "output": "Ranked hotspot table + hexbin map",
+      "cypher": "MATCH (s:Study)-[:HAS_FACILITY]->(f:Facility) RETURN s.nct_id, f.city, f.country, f.lat, f.lon, s.covid_transition, s.covid_overlap_days, s.study_duration_days"
+    },
+    {
+      "id": "H2",
+      "function": "hotspot_clusters",
+      "assumption": "spatial clusters of impact",
+      "slides": {
+        "deck": "IntroductionToClustering",
+        "pages": "63-72"
+      },
+      "targets": {
+        "node": "Facility",
+        "fields": [
+          "lat",
+          "lon"
+        ]
+      },
+      "source": "ladybug:Facility",
+      "method": "DBSCAN on haversine lat/lon weighted by duration change; report clusters whose mean change CI excludes 0.",
+      "output": "Cluster table + map",
+      "cypher": "MATCH (s:Study)-[:HAS_FACILITY]->(f:Facility) RETURN f.id, f.lat, f.lon, s.covid_transition, s.study_duration_days"
+    },
+    {
+      "id": "H3",
+      "function": "hotspot_anomalies",
+      "assumption": "unusual series per place or MeSH group",
+      "slides": {
+        "deck": "14_ComplexTimeSeries",
+        "pages": "27-31, 37"
+      },
+      "targets": {
+        "series": "T1 split by country or MeSH group"
+      },
+      "source": "derived:T1",
+      "method": "STRAY anomaly scores per group series; flag groups whose COVID-window values are outliers.",
+      "output": "Anomaly table",
+      "cypher": "from T1 frame grouped by country or MeSH"
+    },
+    {
+      "id": "S1",
+      "function": "bootstrap_group_diff",
+      "assumption": "group difference without normality",
+      "slides": {
+        "deck": "06b_IntroductionToBootstrap",
+        "pages": "26-33"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "study_duration_days"
+        ],
+        "groups": [
+          "covid_transition",
+          "condition MeSH group",
+          "intervention MeSH group"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Two-sample bootstrap of median difference (pre_pre vs pre_during, etc.), 10,000 resamples by default; selected cases via bootstrap_case with B up to 100,000, percentile CI.",
+      "output": "Bootstrap distribution + CI per contrast",
+      "cypher": "MATCH (s:Study)-[:HAS_MESH_CONDITION]->(mc:MeshTerm) OPTIONAL MATCH (s)-[:HAS_MESH_INTERVENTION]->(mi:MeshTerm) RETURN s.nct_id, s.covid_transition, s.study_duration_days, mc.id AS cond_mesh, mi.id AS int_mesh"
+    },
+    {
+      "id": "S2",
+      "function": "subset_representativeness",
+      "assumption": "sample represents population",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "24-37"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "phase",
+          "covid_transition",
+          "Sponsor.agency_class"
+        ]
+      },
+      "source": "ladybug:Study (subset) vs postgres:ctgov.studies (all kidney cancer, US)",
+      "method": "Compare strata proportions; if they differ, use stratified sampling by covid_transition x phase.",
+      "output": "Proportion comparison table",
+      "cypher": "MATCH (s:Study)-[:IS_LEAD_SPONSOR]->(sp:Sponsor) RETURN s.nct_id, s.phase, s.covid_transition, sp.agency_class"
+    },
+    {
+      "id": "S3",
+      "function": "clt_check",
+      "assumption": "sampling distribution normality",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "6-23"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment"
+        ],
+        "groups": "covid_transition"
+      },
+      "source": "ladybug:Study",
+      "method": "Bootstrap the mean per group; QQ-plot of bootstrap means to see whether small groups reach normality.",
+      "output": "QQ plots per group",
+      "cypher": "MATCH (s:Study) RETURN s.nct_id, s.covid_transition, s.enrollment, s.study_duration_days"
+    },
+    {
+      "id": "A1",
+      "function": "designed_missingness_sim",
+      "assumption": "CI robustness to NaN and 0",
+      "slides": {
+        "deck": "04_SamplingAndSimulation",
+        "pages": "40-47"
+      },
+      "targets": {
+        "fields": [
+          "study_duration_days",
+          "enrollment"
+        ],
+        "versions": [
+          "clean",
+          "designed_missing"
+        ]
+      },
+      "source": "ladybug:Study + postgres:ctgov.studies (raw nulls)",
+      "method": "Inject NaN / 0 under MCAR, MAR, MNAR at 5/10/20/40 percent; repeat 200 times per cell.",
+      "output": "Long table: scenario, rate, treatment, replicate, estimate",
+      "cypher": "S1 frame + postgres raw nulls"
+    },
+    {
+      "id": "A2",
+      "function": "ci_impact_compare",
+      "assumption": "CI robustness to NaN and 0",
+      "slides": {
+        "deck": "06b_IntroductionToBootstrap",
+        "pages": "13-33"
+      },
+      "targets": {
+        "versions": [
+          "clean",
+          "designed_missing"
+        ]
+      },
+      "source": "derived:A1",
+      "method": "Bootstrap CIs per MeSH group and covid_transition; plot CI width and bias vs missing rate by scenario and treatment; coverage of the clean-version estimate.",
+      "output": "CI width / coverage plot",
+      "cypher": "from A1 output"
+    },
+    {
+      "id": "E1",
+      "function": "enrollment_model",
+      "assumption": "Aim 1: estimate enrollment",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "17-33"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment (ACTUAL only)",
+          "phase",
+          "number_of_arms",
+          "therapeutic area",
+          "covid_transition"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Hierarchical negative binomial (or log-normal per D3) for enrollment by area; posterior predictive intervals for a new trial.",
+      "output": "Predicted enrollment interval per area and phase",
+      "cypher": "MATCH (s:Study) WHERE s.enrollment_type = 'ACTUAL' RETURN s.nct_id, s.enrollment, s.phase, s.number_of_arms, s.covid_transition"
+    },
+    {
+      "id": "R1",
+      "function": "recruitment_rate",
+      "assumption": "Future ask: recruit time",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "17-24"
+      },
+      "targets": {
+        "node": "Study",
+        "fields": [
+          "enrollment",
+          "primary_duration_days"
+        ]
+      },
+      "source": "ladybug:Study",
+      "method": "Proxy: ACTUAL enrollment / primary_duration_days (patients per month); distribution by area and covid_transition. AACT has no explicit recruitment end date.",
+      "output": "Recruitment-rate distribution per area",
+      "cypher": "MATCH (s:Study) WHERE s.enrollment_type = 'ACTUAL' RETURN s.nct_id, s.enrollment, s.primary_duration_days, s.covid_transition"
+    },
+    {
+      "id": "B1",
+      "function": "prior_predictive_check",
+      "assumption": "priors produce plausible data",
+      "slides": {
+        "deck": "15_BayesModels_MCMC",
+        "pages": "53-56"
+      },
+      "targets": {
+        "model": "hierarchical NB enrollment / log-normal duration / Bernoulli stopping"
+      },
+      "source": "model",
+      "method": "Sample from priors only; check simulated enrollment and duration ranges are realistic.",
+      "output": "Prior predictive histograms",
+      "cypher": "model"
+    },
+    {
+      "id": "B2",
+      "function": "mcmc_diagnostics",
+      "assumption": "sampler convergence",
+      "slides": {
+        "deck": "15_BayesModels_MCMC",
+        "pages": "26-30, 57-65"
+      },
+      "targets": {
+        "model": "all Bayesian fits"
+      },
+      "source": "model",
+      "method": "Trace plots, R-hat, effective sample size, divergences (NUTS).",
+      "pass_criterion": "R-hat < 1.01, bulk ESS > 400, no divergences",
+      "output": "ArviZ summary table",
+      "cypher": "model"
+    },
+    {
+      "id": "B3",
+      "function": "posterior_predictive_check",
+      "assumption": "likelihood fits data",
+      "slides": {
+        "deck": "15_BayesModels_MCMC",
+        "pages": "66-77"
+      },
+      "targets": {
+        "model": "all Bayesian fits"
+      },
+      "source": "model + ladybug:Study",
+      "method": "Overlay posterior predictive draws on observed distributions; check zeros, tails and group means.",
+      "output": "PPC plots",
+      "cypher": "model + S1 frame"
+    },
+    {
+      "id": "B4",
+      "function": "pooling_comparison",
+      "assumption": "grouping structure",
+      "slides": {
+        "deck": "16_HierarchicalBayesModels",
+        "pages": "14-51"
+      },
+      "targets": {
+        "model": "duration ~ covid_transition + covid_overlap_days + (1|condition MeSH) + (1|intervention MeSH) + (1|lead sponsor): pooled vs unpooled vs hierarchical"
+      },
+      "source": "model",
+      "method": "Fit all three; compare with LOO / WAIC.",
+      "output": "LOO comparison table",
+      "cypher": "model + S1 frame"
+    },
+    {
+      "id": "B5",
+      "function": "shrinkage_plot",
+      "assumption": "partial pooling behaves sensibly",
+      "slides": {
+        "deck": "16_HierarchicalBayesModels",
+        "pages": "52-55"
+      },
+      "targets": {
+        "model": "hierarchical fit"
+      },
+      "source": "model",
+      "method": "Plot unpooled vs hierarchical sponsor intercepts against sponsor study counts.",
+      "output": "Shrinkage plot",
+      "cypher": "model"
+    },
+    {
+      "id": "P1",
+      "function": "participant_loss",
+      "assumption": "Future ask: where patients are lost",
+      "slides": {
+        "deck": "11_ModelsForMessyData",
+        "pages": "3-16"
+      },
+      "targets": {
+        "tables": [
+          "ctgov.drop_withdrawals",
+          "ctgov.milestones"
+        ]
+      },
+      "source": "not in the graph yet; needs new pipeline nodes/edges",
+      "method": "Drop-out counts by reason and period (zero-inflated counts); only for trials with posted results.",
+      "output": "Loss by reason and milestone",
+      "cypher": null
+    }
+  ],
+  "data_versions": {
+    "clean": {
+      "description": "Drop studies with no HAS_MESH_CONDITION edge or no HAS_MESH_INTERVENTION edge; drop sentinel 0 / unknown values on fields used; ACTUAL completion dates only.",
+      "risk": "Intervention MeSH (browse_interventions) mostly covers drugs; procedure, radiation, behavioral and device trials often have none, so this filter is not random (test MS1)."
+    },
+    "designed_missing": {
+      "description": "Keep all studies; restore NaN where features.py coded 0/unknown (from raw ctgov.studies); then inject NaN and 0 deliberately under MCAR, MAR (missingness depends on phase or start year) and MNAR (long durations more likely missing) at 5, 10, 20 and 40 percent.",
+      "estimate": "For each scenario and rate: bootstrap (B=2000) mean and median duration per MeSH group and per covid_period; record CI width, CI shift, and coverage of the clean-version estimate.",
+      "treatments": [
+        "complete-case (drop NaN)",
+        "zero-as-value (keep 0)",
+        "MICE (m=5)"
+      ]
+    }
+  },
+  "model": {
+    "primary": "V4 location-scale hierarchical model of log duration",
+    "secondary": [
+      "Q2 success model",
+      "E1 enrollment model"
+    ],
+    "fit_on": [
+      "clean",
+      "designed_missing"
+    ]
+  },
+  "access": {
+    "_note": "Every test function takes an open LadybugDB connection and runs Cypher against the .kz database directly. Postgres is only needed where raw nulls matter (see needs_postgres).",
+    "db_path": "LBUG_DIR=/database/database.kz (graph_data volume, mounted in jupyter and graph-pipeline)",
+    "connection": "import real_ladybug as lb; db = lb.Database(LBUG_DIR, read_only=True); conn = lb.Connection(db)  # API assumed Kuzu-style; confirm read_only flag",
+    "fetch": "conn.execute(cypher, parameters).get_as_df()",
+    "single_writer": "Open read-only. ladybug_import.py must not run at the same time; restart other notebook kernels that hold a lock.",
+    "id_filters": "Never IN lists with special-character ids; use batched OR-chains (50-100 ids) with _esc(), as in fetch_embeddings().",
+    "scope_param": "Each function takes study_ids (from select_study_ids) or None for the whole graph; US vs global is just a different study_ids list.",
+    "pattern": "Pull each test frame once, cache as parquet keyed by (test id, FILTERS hash), then resample in numpy; never re-query inside a bootstrap loop.",
+    "needs_postgres": [
+      "M1",
+      "M2",
+      "M3",
+      "M6",
+      "A1",
+      "G1"
+    ],
+    "heavy_bootstrap": {
+      "function": "bootstrap_case(frame, stat, group_cols, B=100000, seed)",
+      "note": "For the few cases bootstrapped hard: vectorised numpy resampling in chunks of 10,000 to stay within memory; report percentile and BCa CIs and the Monte Carlo error of the CI ends."
+    }
+  },
+  "hypotheses": [
+    {
+      "id": "H-A",
+      "claim": "In 2020-2022 the distribution of time-to-completion tightened (lower spread around the mean).",
+      "tests": [
+        "C1",
+        "V3",
+        "V1",
+        "V2",
+        "V4"
+      ],
+      "note": "Define cohorts by start date, never by completion date. Trials completing inside a 2-year window are capped in how long they can have run, which tightens spread by construction (V3 simulates this)."
+    },
+    {
+      "id": "H-B",
+      "claim": "The tightening is caused by COVID rather than other global factors.",
+      "tests": [
+        "V2",
+        "V5",
+        "T4",
+        "T5",
+        "V4"
+      ],
+      "note": "Placebo windows, mix shift (phase, sponsor class, therapeutic area, intervention type), and known non-COVID breaks such as the FDAAA 801 Final Rule (effective 2017-01-18)."
+    },
+    {
+      "id": "H-C",
+      "claim": "The effects are statistically significant.",
+      "tests": [
+        "V1",
+        "S1",
+        "V4",
+        "B2",
+        "B3"
+      ],
+      "note": "Bootstrap CIs on the SD/IQR ratio and posterior of the sigma contrast; correct for multiple therapeutic areas."
+    },
+    {
+      "id": "H-D",
+      "claim": "Patterns differ by therapeutic area and patient population size.",
+      "tests": [
+        "TA1",
+        "TA2",
+        "MS2",
+        "V4",
+        "E1"
+      ],
+      "note": "Area-specific sigma and slope on log enrollment in the location-scale model."
+    },
+    {
+      "id": "H-E",
+      "claim": "Some areas show narrower distributions than others for identifiable reasons.",
+      "tests": [
+        "V5",
+        "V4",
+        "D5",
+        "H1"
+      ],
+      "note": "Decompose spread change into within-group change vs shift in mix."
+    },
+    {
+      "id": "H-F",
+      "claim": "Duration is linked to successful completion over the COVID span.",
+      "tests": [
+        "Q1",
+        "Q2",
+        "C1"
+      ],
+      "note": "Success needs a QC-defined label first (Q1)."
+    }
+  ]
+}

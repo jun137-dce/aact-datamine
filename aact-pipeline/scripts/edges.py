@@ -76,3 +76,20 @@ def make_facilities_edges(facilities_df):
         .drop_duplicates()
         .reset_index(drop=True)
     )
+
+
+# -------------------------
+# Study → TrialArm
+# -------------------------
+def make_arm_edges(trial_arm_nodes_df):
+    """
+    Build HAS_ARM edges from the TrialArm node table.
+    trial_arm_nodes_df must have columns: nct_id (Study PK), id (TrialArm PK).
+    One edge per arm; studies with no Participant Flow result_groups produce no edges.
+    """
+    return (
+        trial_arm_nodes_df[["nct_id", "id"]]
+        .rename(columns={"nct_id": "source_id", "id": "target_id"})
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )

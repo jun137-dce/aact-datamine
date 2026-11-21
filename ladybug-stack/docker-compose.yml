@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
 
   # -------------------------------------------------------
@@ -34,6 +32,36 @@ services:
     environment: {}
     volumes:
       - graph_data:/database
+      
+  # -------------------------------------------------------
+  # Jupyter Notebook — Pytorch + PyG CUDA-enabled environment with
+  # embedded graph DB + web UI
+  # Graph data lives at LBUG_DIR=/database (named volume = persistent)
+  # Access via browser at http://localhost:8888
+  # Stop this container before running ladybug-explorer (single writer)
+  # -------------------------------------------------------
+  jupyter:
+    build:
+      context: ..
+      dockerfile: ladybug-stack/Dockerfile
+    container_name: graph-jupyter
+    user: "1000:1000"
+    ports:
+      - "8888:8888"
+    shm_size: "8gb"
+    gpus: all
+    environment:
+      HOME: /home/jupyter
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      HF_HOME: /tmp/huggingface
+      TRANSFORMERS_CACHE: /tmp/huggingface
+      HUGGINGFACE_HUB_CACHE: /tmp/huggingface
+      LBUG_DIR: /database/database.kz
+    volumes:
+      - graph_data:/database
+      - ../aact-pipeline:/app
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
 
   # -------------------------------------------------------
   # Graph-Pipeline — runs run_pipeline.py + ladybug_import.py
@@ -42,6 +70,8 @@ services:
   # Run with: docker compose run --rm graph-pipeline python ladybug_import.py
   # -------------------------------------------------------
   graph-pipeline:
+    gpus: all
+    runtime: nvidia
     build:
       context: ..
       dockerfile: ladybug-stack/Dockerfile
@@ -55,6 +85,9 @@ services:
       DB_NAME: aactdb
       DB_USER: postgres
       DB_PASS: postgres
+      HF_HOME: /tmp/huggingface
+      TRANSFORMERS_CACHE: /tmp/huggingface
+      HUGGINGFACE_HUB_CACHE: /tmp/huggingface
       LBUG_DIR: /database/database.kz
     volumes:
       - ../aact-pipeline:/app

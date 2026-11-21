@@ -71,11 +71,20 @@ _STUDY_BOOL_COLS = [
     "is_fda_regulated_drug",
     "is_fda_regulated_device",
     "has_dmc",
+    # Withdrawal flags (see scripts/withdrawals.py)
+    "has_withdrawal_data",
+    "arm_count_parity",
 ]
 
 # Continuous — z-score after log1p (right-skewed counts)
 _STUDY_LOG_COLS = [
     "enrollment",
+    # Withdrawal counts are right-skewed (most studies have 0, a few have many)
+    "total_withdrawal_count",
+    "adverse_event_withdrawal_count",
+    "subject_withdrawal_count",
+    "lost_to_followup_count",
+    "death_withdrawal_count",
 ]
 
 # Continuous — z-score directly

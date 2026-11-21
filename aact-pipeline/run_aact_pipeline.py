@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from scripts.features import load_study_features
 from scripts.preprocess import run_all as encode_node_features
 from scripts.mesh import build_mesh
+from scripts.withdrawals import build_trial_arms
 from scripts.edges import (
     make_conditions_edges,
     make_interventions_edges,
@@ -160,6 +161,22 @@ def main():
     interventions_edges = make_interventions_edges(interventions)
     interventions_edges.to_parquet(os.path.join(OUTPUT_DIR, "interventions_edges.parquet"), index=False)
 
+    # Intervention aliases — trade names, abbreviations, INN synonyms registered
+    # per study. Saved for synonym expansion in mesh_similarity_edges.py so that
+    # e.g. "myocet" resolves to "doxorubicin" via "liposomal doxorubicin citrate".
+    export_table(
+        """
+        SELECT LOWER(TRIM(i.name))   AS source_term,
+               LOWER(TRIM(ion.name)) AS synonym
+        FROM   ctgov.intervention_other_names ion
+        JOIN   ctgov.interventions i ON ion.intervention_id = i.id
+        WHERE  ion.name IS NOT NULL
+          AND  i.name   IS NOT NULL
+          AND  LOWER(TRIM(ion.name)) <> LOWER(TRIM(i.name))
+        """,
+        "intervention_synonyms.csv",
+    )
+
     # -------------------------
     # 5. Sponsors
     # -------------------------
@@ -312,7 +329,31 @@ def main():
         print(f"  merged {len(da_cols)} disease area columns into study_features.parquet")
 
     # -------------------------
-    # 10. Encode node features for GraphSAGE
+    # 10. TrialArm nodes + HAS_ARM edges + withdrawal study features
+    # -------------------------
+    # build_trial_arms writes trial_arms.parquet and trial_arm_edges.parquet to OUTPUT_DIR
+    # and returns study-level withdrawal aggregates for merging into study_features.
+    withdrawal_study_feats = build_trial_arms(engine, OUTPUT_DIR)
+
+    # Merge withdrawal aggregates into study_features; studies with no results data
+    # get has_withdrawal_data=0 and all counts filled with 0.
+    withdrawal_bool_cols  = ["has_withdrawal_data", "arm_count_parity"]
+    withdrawal_count_cols = [
+        "total_withdrawal_count",
+        "adverse_event_withdrawal_count",
+        "subject_withdrawal_count",
+        "lost_to_followup_count",
+        "death_withdrawal_count",
+    ]
+    study_features = study_features.merge(withdrawal_study_feats, on="nct_id", how="left")
+    study_features[withdrawal_bool_cols]  = study_features[withdrawal_bool_cols].fillna(0).astype(int)
+    study_features[withdrawal_count_cols] = study_features[withdrawal_count_cols].fillna(0).astype(int)
+    study_features = study_features.drop_duplicates(subset=["nct_id"]).reset_index(drop=True)
+    study_features.to_parquet(os.path.join(OUTPUT_DIR, "study_features.parquet"), index=False)
+    print(f"  merged {len(withdrawal_bool_cols) + len(withdrawal_count_cols)} withdrawal columns into study_features.parquet")
+
+    # -------------------------
+    # 11. Encode node features for GraphSAGE
     # -------------------------
     encode_node_features()
 

@@ -19,26 +19,29 @@ NODE_FILES = [
     ("sponsors.parquet",         "Sponsor",      "id"),
     ("facilities.parquet",       "Facility",     "id"),
     ("mesh_terms.parquet",       "MeshTerm",     "id"),
+    ("trial_arms.parquet",       "TrialArm",     "id"),
 ]
 
 # Embedding parquets to merge onto node tables before import: node_table → filename
 EMBEDDING_FILES = {
-    "Study":        "study_bert_embeddings.parquet",
-    "Condition":    "condition_bert_embeddings.parquet",
-    "Intervention": "intervention_bert_embeddings.parquet",
-    "MeshTerm":     "mesh_term_bert_embeddings.parquet",
+    "Study":    "study_bert_embeddings.parquet",
+    "MeshTerm": "mesh_term_bert_embeddings.parquet",
 }
 
-# Edge parquet files: (filename, rel_table, from_node_table, to_node_table)
+# Edge parquet files: (filename, rel_table, from_node_table, to_node_table[, props_dict])
+# props_dict is optional — include it for rel tables that carry edge properties.
 EDGE_FILES = [
-    ("conditions_edges.parquet",         "HAS_CONDITION",         "Study",    "Condition"),
-    ("interventions_edges.parquet",      "HAS_INTERVENTION",      "Study",    "Intervention"),
-    ("lead_sponsor_edges.parquet",       "IS_LEAD_SPONSOR",       "Study",    "Sponsor"),
-    ("collaborator_edges.parquet",       "IS_COLLABORATOR",       "Study",    "Sponsor"),
-    ("facilities_edges.parquet",         "HAS_FACILITY",          "Study",    "Facility"),
-    ("mesh_condition_edges.parquet",     "HAS_MESH_CONDITION",    "Study",    "MeshTerm"),
-    ("mesh_intervention_edges.parquet",  "HAS_MESH_INTERVENTION", "Study",    "MeshTerm"),
-    ("mesh_hierarchy_edges.parquet",     "IS_A",                  "MeshTerm", "MeshTerm"),
+    ("conditions_edges.parquet",                "HAS_CONDITION",             "Study",     "Condition"),
+    ("interventions_edges.parquet",             "HAS_INTERVENTION",          "Study",     "Intervention"),
+    ("lead_sponsor_edges.parquet",              "IS_LEAD_SPONSOR",           "Study",     "Sponsor"),
+    ("collaborator_edges.parquet",              "IS_COLLABORATOR",           "Study",     "Sponsor"),
+    ("facilities_edges.parquet",                "HAS_FACILITY",              "Study",     "Facility"),
+    ("mesh_condition_edges.parquet",            "HAS_MESH_CONDITION",        "Study",     "MeshTerm"),
+    ("mesh_intervention_edges.parquet",         "HAS_MESH_INTERVENTION",     "Study",     "MeshTerm"),
+    ("mesh_hierarchy_edges.parquet",            "IS_A",                      "MeshTerm",  "MeshTerm"),
+    ("maps_to_mesh_condition_edges.parquet",    "MAPS_TO_MESH_CONDITION",    "Condition", "MeshTerm",  {"weight": "DOUBLE"}),
+    ("maps_to_mesh_intervention_edges.parquet", "MAPS_TO_MESH_INTERVENTION", "Intervention", "MeshTerm", {"weight": "DOUBLE"}),
+    ("trial_arm_edges.parquet",                 "HAS_ARM",                   "Study",     "TrialArm"),
 ]
 
 EMBEDDING_DIM = 768
@@ -87,8 +90,11 @@ def create_node_table(conn, table, df, pk_col):
     print(f"  node table ready: {table}")
 
 
-def create_rel_table(conn, rel, from_table, to_table):
-    ddl = f"CREATE REL TABLE IF NOT EXISTS {rel}(FROM {from_table} TO {to_table})"
+def create_rel_table(conn, rel, from_table, to_table, props=None):
+    prop_str = ""
+    if props:
+        prop_str = ", " + ", ".join(f"{k} {v}" for k, v in props.items())
+    ddl = f"CREATE REL TABLE IF NOT EXISTS {rel}(FROM {from_table} TO {to_table}{prop_str})"
     conn.execute(ddl)
     print(f"  rel table ready: {rel}")
 
@@ -130,8 +136,10 @@ def main():
         df, pk_col = node_dfs[table]
         create_node_table(conn, table, df, pk_col)
 
-    for _, rel, from_table, to_table in EDGE_FILES:
-        create_rel_table(conn, rel, from_table, to_table)
+    for entry in EDGE_FILES:
+        _, rel, from_table, to_table = entry[:4]
+        props = entry[4] if len(entry) > 4 else None
+        create_rel_table(conn, rel, from_table, to_table, props)
 
     # ---- Nodes ----
     print("\nImporting nodes...")
@@ -148,23 +156,26 @@ def main():
 
     # ---- Edges ----
     print("\nImporting edges...")
-    for filename, rel, from_table, to_table in EDGE_FILES:
+    for entry in EDGE_FILES:
+        filename, rel, from_table, to_table = entry[:4]
+        props = entry[4] if len(entry) > 4 else None
         path = os.path.join(INPUT_DIR, filename)
         if not os.path.exists(path):
             print(f"  skipping {filename}")
             continue
-        from_pk = node_pks[from_table]
-        to_pk   = node_pks[to_table]
+        from_pk    = node_pks[from_table]
+        to_pk      = node_pks[to_table]
+        prop_cols  = list(props.keys()) if props else []
         df = pd.read_parquet(path)
         if from_pk == to_pk:
             # Parquet forbids duplicate column names; use positional from_id/to_id.
             # source_id = from-node, target_id = to-node — order preserved.
-            df = df[["source_id", "target_id"]].rename(
+            df = df[["source_id", "target_id"] + prop_cols].rename(
                 columns={"source_id": "from_id", "target_id": "to_id"}
             )
         else:
             df = df.rename(columns={"source_id": from_pk, "target_id": to_pk})
-            df = df[[from_pk, to_pk]]
+            df = df[[from_pk, to_pk] + prop_cols]
         tmp = path.replace(".parquet", "_import.parquet")
         df.to_parquet(tmp, index=False)
         conn.execute(f"COPY {rel} FROM '{tmp}'")
