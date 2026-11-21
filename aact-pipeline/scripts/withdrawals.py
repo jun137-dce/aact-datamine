@@ -165,42 +165,50 @@ LEFT JOIN started_counts  sc ON fg.result_group_id = sc.result_group_id
 # collapse to the same key.  reason_bucket maps to the same 9-category taxonomy
 # used in withdrawal_agg above, enabling joins from the parquet for model filtering.
 _REASON_LOOKUP_SQL = """
+WITH norm AS (
+    SELECT
+        nct_id,
+        result_group_id,
+        LOWER(TRIM(period)) AS period_normalized,
+        LOWER(TRIM(reason)) AS reason_normalized,
+        count
+    FROM ctgov.drop_withdrawals
+    WHERE reason IS NOT NULL
+      AND count  IS NOT NULL
+)
 SELECT
-    dw.nct_id,
-    dw.result_group_id,
-    LOWER(TRIM(dw.period)) AS period_normalized,
-    LOWER(TRIM(dw.reason)) AS reason_normalized,
+    nct_id,
+    result_group_id,
+    period_normalized,
+    reason_normalized,
     CASE
-        WHEN LOWER(dw.reason) LIKE '%%adverse event%%'
-          OR LOWER(dw.reason) LIKE '%%toxicity%%'                   THEN 'adverse_event'
-        WHEN LOWER(dw.reason) LIKE '%%withdrawal by subject%%'
-          OR LOWER(dw.reason) LIKE '%%withdrew consent%%'
-          OR LOWER(dw.reason) LIKE '%%patient decision%%'           THEN 'subject_voluntary'
-        WHEN LOWER(dw.reason) LIKE '%%lost to follow%%'             THEN 'lost_to_followup'
-        WHEN LOWER(dw.reason) LIKE '%%death%%'
-          OR LOWER(dw.reason) LIKE '%%deceased%%'                   THEN 'death'
-        WHEN LOWER(dw.reason) LIKE '%%protocol deviation%%'
-          OR LOWER(dw.reason) LIKE '%%protocol violation%%'
-          OR LOWER(dw.reason) LIKE '%%non-compliance%%'             THEN 'protocol_deviation'
-        WHEN LOWER(dw.reason) LIKE '%%physician%%'
-          OR LOWER(dw.reason) LIKE '%%investigator%%'
-          OR LOWER(dw.reason) LIKE '%%doctor%%'                     THEN 'physician_decision'
-        WHEN LOWER(dw.reason) LIKE '%%sponsor%%'                    THEN 'sponsor_decision'
-        WHEN LOWER(dw.reason) LIKE '%%lack of efficacy%%'
-          OR LOWER(dw.reason) LIKE '%%insufficient response%%'
-          OR LOWER(dw.reason) LIKE '%%treatment failure%%'          THEN 'lack_of_efficacy'
-        WHEN LOWER(dw.reason) LIKE '%%ineligib%%'
-          OR LOWER(dw.reason) LIKE '%%not eligible%%'
-          OR LOWER(dw.reason) LIKE '%%screen fail%%'                THEN 'ineligibility'
+        WHEN reason_normalized LIKE '%%adverse event%%'
+          OR reason_normalized LIKE '%%toxicity%%'                   THEN 'adverse_event'
+        WHEN reason_normalized LIKE '%%withdrawal by subject%%'
+          OR reason_normalized LIKE '%%withdrew consent%%'
+          OR reason_normalized LIKE '%%patient decision%%'           THEN 'subject_voluntary'
+        WHEN reason_normalized LIKE '%%lost to follow%%'             THEN 'lost_to_followup'
+        WHEN reason_normalized LIKE '%%death%%'
+          OR reason_normalized LIKE '%%deceased%%'                   THEN 'death'
+        WHEN reason_normalized LIKE '%%protocol deviation%%'
+          OR reason_normalized LIKE '%%protocol violation%%'
+          OR reason_normalized LIKE '%%non-compliance%%'             THEN 'protocol_deviation'
+        WHEN reason_normalized LIKE '%%physician%%'
+          OR reason_normalized LIKE '%%investigator%%'
+          OR reason_normalized LIKE '%%doctor%%'                     THEN 'physician_decision'
+        WHEN reason_normalized LIKE '%%sponsor%%'                    THEN 'sponsor_decision'
+        WHEN reason_normalized LIKE '%%lack of efficacy%%'
+          OR reason_normalized LIKE '%%insufficient response%%'
+          OR reason_normalized LIKE '%%treatment failure%%'          THEN 'lack_of_efficacy'
+        WHEN reason_normalized LIKE '%%ineligib%%'
+          OR reason_normalized LIKE '%%not eligible%%'
+          OR reason_normalized LIKE '%%screen fail%%'                THEN 'ineligibility'
         ELSE 'other'
     END AS reason_bucket,
-    SUM(dw.count) AS withdrawal_count
-FROM ctgov.drop_withdrawals dw
-WHERE dw.reason IS NOT NULL
-  AND dw.count  IS NOT NULL
-GROUP BY dw.nct_id, dw.result_group_id,
-         LOWER(TRIM(dw.period)), LOWER(TRIM(dw.reason))
-ORDER BY dw.nct_id, dw.result_group_id, period_normalized, reason_normalized
+    SUM(count) AS withdrawal_count
+FROM norm
+GROUP BY nct_id, result_group_id, period_normalized, reason_normalized
+ORDER BY nct_id, result_group_id, period_normalized, reason_normalized
 """
 
 
@@ -253,7 +261,7 @@ def build_trial_arm_nodes(df):
         df[col] = df[col].fillna("").astype(str)
 
     keep = [
-        "id", "nct_id", "ctgov_group_code",
+        "id", "nct_id", "ctgov_group_code", "result_group_id",
         "flow_arm_title", "planned_arm_title", "planned_arm_type",
         "arm_link_confidence",
         "executed_arm_count", "planned_arm_count",
