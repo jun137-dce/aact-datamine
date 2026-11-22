@@ -22,7 +22,8 @@ Install from https://dbeaver.io/download/ for Windows, it can be used to view th
 
 ## 1. Create local AACT ClinicalTrials Database (ONLY DONE ONCE)
 ### 1.1. Download the ClinicalTrials.gov Database .ZIP file: 
-https://aact.ctti-clinicaltrials.org/static/static_db_copies/daily/2026-04-08?source=web
+https://aact.ctti-clinicaltrials.org/
+###### * Original link aact.ctti-clinicaltrials.org/static/static_db_copies/daily/2026-04-08?source=web
 
 Unzip the .ZIP file to a location inside this repo
 
@@ -54,7 +55,7 @@ Note that the `pg_restore` command can take over an hour to complete but only ne
 
 ## 2. Translate SQL to Nodes and Edges with `run_aact_pipeline.py` 
 
-The first half of this stack connects to the PostgreSQL AACT database and traverses the schema to grab Sponsors, Facilites, Conditions, Interventions and MeSH Terms for all clinical trials (NCT_IDs)
+The first half of this stack connects to the PostgreSQL AACT database and traverses the schema to grab Sponsors, Facilities, Conditions, Interventions, MeSH Terms, TrialArms, and WithdrawalEntries for all clinical trials (NCT_IDs)
 
 ### 2.1 Build environment Docker Image
 ```
@@ -83,18 +84,28 @@ Building MeshTerm nodes...
 Building study → MeSH edges...
   809226 condition edges, 460608 intervention edges
 Building disease area features (multi-hot from ancestor terms)...
-  429400 studies × 24 disease areas
+  429400 studies × 25 disease areas
 Loading MeSH hierarchy (download once, then cached)...
 Building IS_A hierarchy edges...
   18880 IS_A edges
 MeSH build complete.
-  merged 24 disease area columns into study_features.parquet
+  merged 25 disease area columns into study_features.parquet
+Building TrialArm nodes...
+  188485 TrialArm nodes → /app/output/trial_arms.parquet
+Building HAS_ARM edges...
+  188485 HAS_ARM edges → /app/output/trial_arm_edges.parquet
+Building withdrawal reason lookup (period × reason × bucket)...
+  580,821 rows, 28420 distinct reason strings → /app/output/withdrawal_reason_lookup.parquet
+  580,821 HAS_WITHDRAWAL_ENTRY edges → /app/output/withdrawal_entry_edges.parquet
+Computing study-level withdrawal features...
+  77316 studies with withdrawal data
+  merged 12 withdrawal columns into study_features.parquet
 Encoding node features...
-  saved study_features_encoded.parquet  (579010 rows × 83 cols)
+  saved study_features_encoded.parquet  (579010 rows × 96 cols)
   saved facilities_encoded.parquet  (78242 rows × 229 cols)
-  saved interventions_encoded.parquet  (960553 rows × 12 cols)
+  saved interventions_encoded.parquet  (475117 rows × 12 cols)
   saved sponsors_encoded.parquet  (101278 rows × 10 cols)
-  saved conditions_encoded.parquet  (1031958 rows × 2 cols)
+  saved conditions_encoded.parquet  (126373 rows × 2 cols)
 Encoding complete.
 ✅ Pipeline complete. Outputs written to /app/output
 ```
@@ -121,9 +132,6 @@ docker compose run --rm graph-pipeline python ladybug_import.py
 ```
 #### A successful run will output:
 ```
-✔ Container aact-postgres Running
-Container ladybug-stack-graph-pipeline-run-46103dda4c4c Creating
-Container ladybug-stack-graph-pipeline-run-46103dda4c4c Created
 Opening Ladybug DB at /database/database.kz ...
 
 Setting up schema...
@@ -133,6 +141,8 @@ Setting up schema...
   node table ready: Sponsor
   node table ready: Facility
   node table ready: MeshTerm
+  node table ready: TrialArm
+  node table ready: WithdrawalEntry
   rel table ready: HAS_CONDITION
   rel table ready: HAS_INTERVENTION
   rel table ready: IS_LEAD_SPONSOR
@@ -141,26 +151,36 @@ Setting up schema...
   rel table ready: HAS_MESH_CONDITION
   rel table ready: HAS_MESH_INTERVENTION
   rel table ready: IS_A
+  rel table ready: MAPS_TO_MESH_CONDITION
+  rel table ready: MAPS_TO_MESH_INTERVENTION
+  rel table ready: HAS_ARM
+  rel table ready: HAS_WITHDRAWAL_ENTRY
 
 Importing nodes...
   Study: 579010 rows
-  Condition: 1031958 rows
-  Intervention: 960553 rows
+  Condition: 126373 rows
+  Intervention: 475117 rows
   Sponsor: 101278 rows
   Facility: 78242 rows
   MeshTerm: 22531 rows
+  TrialArm: 188485 rows
+  WithdrawalEntry: 580821 rows
 
 Importing edges...
-  HAS_CONDITION: 1031958 rows
-  HAS_INTERVENTION: 960553 rows
+  HAS_CONDITION: 126373 rows
+  HAS_INTERVENTION: 475117 rows
   IS_LEAD_SPONSOR: 579009 rows
   IS_COLLABORATOR: 346015 rows
   HAS_FACILITY: 2723515 rows
   HAS_MESH_CONDITION: 809226 rows
   HAS_MESH_INTERVENTION: 460608 rows
   IS_A: 18880 rows
+  MAPS_TO_MESH_CONDITION: 471783 rows
+  MAPS_TO_MESH_INTERVENTION: 1885664 rows
+  HAS_ARM: 188485 rows
+  HAS_WITHDRAWAL_ENTRY: 580821 rows
 
-Done. Data loaded into Ladybug database.
+Done. Data loaded into Ladybug database, ready to view with ladybug-explorer.
 
 ```
 #### NOTE: Prior `.kz` database files need to be deleted if you ever re-run `ladybug_import.py`
@@ -226,3 +246,22 @@ LIMIT 50;
 
 ### Acknowledgements
 Aggregate Analysis of ClinicalTrials.gov (AACT) Database. Clinical Trials Transformation Initiative (CTTI). Available at: https://aact.ctti-clinicaltrials.org/ (Accessed: 4/8/2026).
+
+* Claude `Sonnet` was used in specific contexts of this project. The project documentation for installation on Github is written and all scripts are thoroughly reviewed entirely by me with no agentic auto prompting allowed.
+*  **Prompted to contextualize and script around the relational schema SQL file of table joins*
+*  **Prompted for help creating nodes, edges and labels between table features in LadybugDB from the published AACT SQL DB used as input*
+*  **Prompted for help with writing and troubleshooting valid CYPHER queries*
+* Claude MD project file is available upon request
+* The ClinicalTrials.gov database SQL object is run directly with `pg_restore`command in PostGresSQL enviroment (input a SQL dump created by `pg_dump` by AACT)
+* The SQL dump file was previously publically accessible to download from their website until recently
+* The aactdb SQL dump file is available upon request
+* Originally Accessed: 4/8/2026
+
+### Works Cited
+1.  [Clinical Trials Transformation Initiative (CTTI). **Aggregate Analysis of ClinicalTrials.gov (AACT) Database**. Accessed: 4/8/2026 https://aact.ctti-clinicaltrials.org/](https://aact.ctti-clinicaltrials.org).
+
+2. [Chen, Z., Peng, B., Ioannidis, V.N. et al. **A knowledge graph of clinical trials: (CTKG)**. Sci Rep 12, 4724 (2022). https://doi.org/10.1038/s41598-022-08454-z](https://www.nature.com/articles/s41598-022-08454-z)
+
+3. [ LadybugDB Developers, `real_ladybug` **LadybugDB package**. MIT License. 2026.](https://github.com/LadybugDB/ladybug/blob/main/LICENSE)
+
+4. [National Library of Medicine (US). **Medical Subject Headings (MeSH)**. Accessed: 4/8/2026. https://www.nlm.nih.gov/mesh/meshhome.html](https://www.nlm.nih.gov/mesh/meshhome.html)
